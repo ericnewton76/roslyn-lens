@@ -25,19 +25,26 @@ public static class GetTestCoverageMapTool
         if (solution is null)
             return JsonSerializer.Serialize(new { error = "No solution loaded" });
 
-        var testProjects = solution.Projects
-            .Where(p => IsTestProject(p.Name))
-            .ToList();
+        var testClassMap = await BuildTestClassMapAsync(workspace, solution, ct);
 
         var productionProjects = solution.Projects
             .Where(p => !IsTestProject(p.Name))
             .Where(p => projectFilter is null || p.Name.Equals(projectFilter, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
-        // Build a lookup of test class names -> (file, project)
+        var (entries, covered, uncovered) = await MatchProductionTypesAsync(
+            workspace, productionProjects, testClassMap, maxResults, ct);
+
+        var result = new TestCoverageMapResult(entries, entries.Count, covered, uncovered);
+        return JsonSerializer.Serialize(result);
+    }
+
+    private static async Task<Dictionary<string, (string? File, string Project)>> BuildTestClassMapAsync(
+        WorkspaceManager workspace, Solution solution, CancellationToken ct)
+    {
         var testClassMap = new Dictionary<string, (string? File, string Project)>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var testProject in testProjects)
+        foreach (var testProject in solution.Projects.Where(p => IsTestProject(p.Name)))
         {
             ct.ThrowIfCancellationRequested();
 
@@ -47,17 +54,24 @@ public static class GetTestCoverageMapTool
             foreach (var tree in compilation.SyntaxTrees)
             {
                 var root = await tree.GetRootAsync(ct);
-                var typeDecls = root.DescendantNodes().OfType<TypeDeclarationSyntax>();
 
-                foreach (var typeDecl in typeDecls)
+                foreach (var typeDecl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
                 {
-                    var typeName = typeDecl.Identifier.Text;
-                    testClassMap.TryAdd(typeName, (tree.FilePath, testProject.Name));
+                    testClassMap.TryAdd(typeDecl.Identifier.Text, (tree.FilePath, testProject.Name));
                 }
             }
         }
 
-        // Match production types to test classes
+        return testClassMap;
+    }
+
+    private static async Task<(List<CoverageEntry> Entries, int Covered, int Uncovered)> MatchProductionTypesAsync(
+        WorkspaceManager workspace,
+        List<Project> productionProjects,
+        Dictionary<string, (string? File, string Project)> testClassMap,
+        int maxResults,
+        CancellationToken ct)
+    {
         var entries = new List<CoverageEntry>();
         var covered = 0;
         var uncovered = 0;
@@ -70,40 +84,46 @@ public static class GetTestCoverageMapTool
             var compilation = await workspace.GetCompilationAsync(project, ct);
             if (compilation is null) continue;
 
-            foreach (var tree in compilation.SyntaxTrees)
+            MatchTypesInCompilation(compilation, testClassMap, maxResults, entries, ref covered, ref uncovered, ct);
+        }
+
+        return (entries, covered, uncovered);
+    }
+
+    private static void MatchTypesInCompilation(
+        Compilation compilation,
+        Dictionary<string, (string? File, string Project)> testClassMap,
+        int maxResults,
+        List<CoverageEntry> entries,
+        ref int covered,
+        ref int uncovered,
+        CancellationToken ct)
+    {
+        foreach (var tree in compilation.SyntaxTrees)
+        {
+            if (entries.Count >= maxResults) break;
+
+            var root = tree.GetRoot(ct);
+
+            foreach (var typeDecl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
             {
                 if (entries.Count >= maxResults) break;
 
-                var root = await tree.GetRootAsync(ct);
-                var typeDecls = root.DescendantNodes().OfType<TypeDeclarationSyntax>();
+                var typeName = typeDecl.Identifier.Text;
+                var matchedTest = FindTestClass(typeName, testClassMap);
 
-                foreach (var typeDecl in typeDecls)
+                if (matchedTest is not null)
                 {
-                    if (entries.Count >= maxResults) break;
-
-                    var typeName = typeDecl.Identifier.Text;
-                    var matchedTest = FindTestClass(typeName, testClassMap);
-
-                    if (matchedTest is not null)
-                    {
-                        entries.Add(new CoverageEntry(
-                            typeName,
-                            matchedTest.Value.TestName,
-                            matchedTest.Value.File,
-                            "covered"));
-                        covered++;
-                    }
-                    else
-                    {
-                        entries.Add(new CoverageEntry(typeName, null, null, "uncovered"));
-                        uncovered++;
-                    }
+                    entries.Add(new CoverageEntry(typeName, matchedTest.Value.TestName, matchedTest.Value.File, "covered"));
+                    covered++;
+                }
+                else
+                {
+                    entries.Add(new CoverageEntry(typeName, null, null, "uncovered"));
+                    uncovered++;
                 }
             }
         }
-
-        var result = new TestCoverageMapResult(entries, entries.Count, covered, uncovered);
-        return JsonSerializer.Serialize(result);
     }
 
     private static bool IsTestProject(string projectName) =>
@@ -116,7 +136,6 @@ public static class GetTestCoverageMapTool
         string productionTypeName,
         Dictionary<string, (string? File, string Project)> testClassMap)
     {
-        // Try common naming patterns
         string[] candidates =
         [
             $"{productionTypeName}Tests",

@@ -24,37 +24,13 @@ public sealed class MissingCancellationTokenDetector : IAntiPatternDetector
         {
             ct.ThrowIfCancellationRequested();
 
-            // Only async methods
             if (!method.Modifiers.Any(SyntaxKind.AsyncKeyword))
                 continue;
 
-            // Only public methods
             if (!method.Modifiers.Any(SyntaxKind.PublicKeyword))
                 continue;
 
-            // Check if any parameter is a CancellationToken
-            var hasCancellationToken = false;
-            foreach (var param in method.ParameterList.Parameters)
-            {
-                var paramSymbol = model.GetDeclaredSymbol(param, ct);
-                if (paramSymbol?.Type is INamedTypeSymbol paramType &&
-                    paramType.Name == "CancellationToken" &&
-                    paramType.ContainingNamespace?.ToDisplayString() == "System.Threading")
-                {
-                    hasCancellationToken = true;
-                    break;
-                }
-
-                // Fallback: check syntax type name
-                var typeName = param.Type?.ToString() ?? string.Empty;
-                if (typeName is "CancellationToken" or "System.Threading.CancellationToken")
-                {
-                    hasCancellationToken = true;
-                    break;
-                }
-            }
-
-            if (!hasCancellationToken)
+            if (!HasCancellationTokenParameter(method, model, ct))
             {
                 var line = method.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
                 yield return new AntiPatternViolation(
@@ -66,5 +42,28 @@ public sealed class MissingCancellationTokenDetector : IAntiPatternDetector
                     "Add CancellationToken as the last parameter");
             }
         }
+    }
+
+    private static bool HasCancellationTokenParameter(
+        MethodDeclarationSyntax method, SemanticModel model, CancellationToken ct)
+    {
+        foreach (var param in method.ParameterList.Parameters)
+        {
+            var paramSymbol = model.GetDeclaredSymbol(param, ct);
+            if (paramSymbol?.Type is INamedTypeSymbol paramType &&
+                paramType.Name == "CancellationToken" &&
+                paramType.ContainingNamespace?.ToDisplayString() == "System.Threading")
+            {
+                return true;
+            }
+
+            var typeName = param.Type?.ToString() ?? string.Empty;
+            if (typeName is "CancellationToken" or "System.Threading.CancellationToken")
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

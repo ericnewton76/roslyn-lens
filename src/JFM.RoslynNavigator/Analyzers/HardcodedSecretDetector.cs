@@ -23,7 +23,14 @@ public sealed class HardcodedSecretDetector : IAntiPatternDetector
         var root = tree.GetRoot(ct);
         var filePath = tree.FilePath;
 
-        // Check variable declarations: var password = "literal";
+        return DetectInVariableDeclarations(root, filePath, ct)
+            .Concat(DetectInAssignments(root, filePath, ct))
+            .Concat(DetectInObjectInitializers(root, filePath, ct));
+    }
+
+    private static IEnumerable<AntiPatternViolation> DetectInVariableDeclarations(
+        SyntaxNode root, string? filePath, CancellationToken ct)
+    {
         foreach (var declarator in root.DescendantNodes().OfType<VariableDeclaratorSyntax>())
         {
             ct.ThrowIfCancellationRequested();
@@ -38,15 +45,17 @@ public sealed class HardcodedSecretDetector : IAntiPatternDetector
             if (!IsSensitiveName(name))
                 continue;
 
-            var value = literal.Token.ValueText;
-            if (IsPlaceholderOrEmpty(value))
+            if (IsPlaceholderOrEmpty(literal.Token.ValueText))
                 continue;
 
             var line = declarator.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
             yield return CreateViolation(name, filePath, line);
         }
+    }
 
-        // Check property assignments: Password = "literal"
+    private static IEnumerable<AntiPatternViolation> DetectInAssignments(
+        SyntaxNode root, string? filePath, CancellationToken ct)
+    {
         foreach (var assignment in root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
         {
             ct.ThrowIfCancellationRequested();
@@ -57,51 +66,38 @@ public sealed class HardcodedSecretDetector : IAntiPatternDetector
             if (!literal.IsKind(SyntaxKind.StringLiteralExpression))
                 continue;
 
-            var name = assignment.Left switch
-            {
-                IdentifierNameSyntax id => id.Identifier.Text,
-                MemberAccessExpressionSyntax ma => ma.Name.Identifier.Text,
-                _ => null
-            };
-
+            var name = GetAssignmentTargetName(assignment);
             if (name is null || !IsSensitiveName(name))
                 continue;
 
-            var value = literal.Token.ValueText;
-            if (IsPlaceholderOrEmpty(value))
+            if (IsPlaceholderOrEmpty(literal.Token.ValueText))
                 continue;
 
             var line = assignment.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
             yield return CreateViolation(name, filePath, line);
         }
+    }
 
-        // Check property initializers in object creation
+    private static IEnumerable<AntiPatternViolation> DetectInObjectInitializers(
+        SyntaxNode root, string? filePath, CancellationToken ct)
+    {
         foreach (var initializer in root.DescendantNodes().OfType<InitializerExpressionSyntax>())
         {
             ct.ThrowIfCancellationRequested();
 
-            foreach (var expr in initializer.Expressions)
+            foreach (var propAssign in initializer.Expressions.OfType<AssignmentExpressionSyntax>())
             {
-                if (expr is not AssignmentExpressionSyntax propAssign)
-                    continue;
-
                 if (propAssign.Right is not LiteralExpressionSyntax literal)
                     continue;
 
                 if (!literal.IsKind(SyntaxKind.StringLiteralExpression))
                     continue;
 
-                var name = propAssign.Left switch
-                {
-                    IdentifierNameSyntax id => id.Identifier.Text,
-                    _ => null
-                };
-
+                var name = propAssign.Left is IdentifierNameSyntax id ? id.Identifier.Text : null;
                 if (name is null || !IsSensitiveName(name))
                     continue;
 
-                var value = literal.Token.ValueText;
-                if (IsPlaceholderOrEmpty(value))
+                if (IsPlaceholderOrEmpty(literal.Token.ValueText))
                     continue;
 
                 var line = propAssign.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
@@ -110,22 +106,24 @@ public sealed class HardcodedSecretDetector : IAntiPatternDetector
         }
     }
 
+    private static string? GetAssignmentTargetName(AssignmentExpressionSyntax assignment) =>
+        assignment.Left switch
+        {
+            IdentifierNameSyntax id => id.Identifier.Text,
+            MemberAccessExpressionSyntax ma => ma.Name.Identifier.Text,
+            _ => null
+        };
+
     private static bool IsSensitiveName(string name)
     {
         var lower = name.ToLowerInvariant();
-        foreach (var sensitive in SensitiveNames)
-        {
-            if (lower.Contains(sensitive, StringComparison.Ordinal))
-                return true;
-        }
-
-        return false;
+        return SensitiveNames.Any(sensitive => lower.Contains(sensitive, StringComparison.Ordinal));
     }
 
     private static bool IsPlaceholderOrEmpty(string value) =>
         string.IsNullOrWhiteSpace(value) ||
         value.StartsWith("${", StringComparison.Ordinal) ||
-        value.StartsWith("{", StringComparison.Ordinal) ||
+        value.StartsWith('{') ||
         value.Equals("CHANGE_ME", StringComparison.OrdinalIgnoreCase) ||
         value.Equals("TODO", StringComparison.OrdinalIgnoreCase) ||
         value.Equals("PLACEHOLDER", StringComparison.OrdinalIgnoreCase);

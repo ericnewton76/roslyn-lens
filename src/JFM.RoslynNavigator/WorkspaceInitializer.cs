@@ -24,12 +24,15 @@ public sealed class WorkspaceInitializer(
             return;
         }
 
-        logger.LogInformation("Loading solution: {SolutionPath}", SolutionPath);
+        if (logger.IsEnabled(LogLevel.Information))
+            logger.LogInformation("Loading solution: {SolutionPath}", SolutionPath);
 
         try
         {
             await workspaceManager.LoadSolutionAsync(SolutionPath, stoppingToken);
-            logger.LogInformation("Solution loaded: {ProjectCount} projects", workspaceManager.ProjectCount);
+
+            if (logger.IsEnabled(LogLevel.Information))
+                logger.LogInformation("Solution loaded: {ProjectCount} projects", workspaceManager.ProjectCount);
         }
         catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
         {

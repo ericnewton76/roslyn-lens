@@ -59,29 +59,12 @@ public static class SolutionDiscovery
 
             try
             {
-                foreach (var file in Directory.EnumerateFiles(dirPath))
-                {
-                    if (!IsSolutionFile(file))
-                        continue;
+                bestMatch = ScanDirectoryForSolution(dirPath, depth, bestMatch, ref bestDepth);
 
-                    if (depth < bestDepth ||
-                        (depth == bestDepth && string.Compare(file, bestMatch, StringComparison.OrdinalIgnoreCase) < 0))
-                    {
-                        bestMatch = Path.GetFullPath(file);
-                        bestDepth = depth;
-                    }
-                }
-
-                // Prefer .slnx over .sln at same depth
                 if (bestMatch is not null && bestMatch.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase) && depth == bestDepth)
                     return bestMatch;
 
-                foreach (var subDir in Directory.EnumerateDirectories(dirPath))
-                {
-                    var dirName = Path.GetFileName(subDir);
-                    if (!SkipDirectories.Contains(dirName))
-                        queue.Enqueue((subDir, depth + 1));
-                }
+                EnqueueSubDirectories(queue, dirPath, depth);
             }
             catch (UnauthorizedAccessException)
             {
@@ -90,6 +73,31 @@ public static class SolutionDiscovery
         }
 
         return bestMatch;
+    }
+
+    private static string? ScanDirectoryForSolution(string dirPath, int depth, string? currentBest, ref int bestDepth)
+    {
+        foreach (var file in Directory.EnumerateFiles(dirPath).Where(IsSolutionFile))
+        {
+            if (depth < bestDepth ||
+                (depth == bestDepth && string.Compare(file, currentBest, StringComparison.OrdinalIgnoreCase) < 0))
+            {
+                currentBest = Path.GetFullPath(file);
+                bestDepth = depth;
+            }
+        }
+
+        return currentBest;
+    }
+
+    private static void EnqueueSubDirectories(Queue<(string Path, int Depth)> queue, string dirPath, int depth)
+    {
+        foreach (var subDir in Directory.EnumerateDirectories(dirPath))
+        {
+            var dirName = Path.GetFileName(subDir);
+            if (!SkipDirectories.Contains(dirName))
+                queue.Enqueue((subDir, depth + 1));
+        }
     }
 
     private static bool IsSolutionFile(string path) =>

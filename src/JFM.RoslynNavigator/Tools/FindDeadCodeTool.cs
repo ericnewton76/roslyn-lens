@@ -58,48 +58,73 @@ public static class FindDeadCodeTool
             var compilation = await workspace.GetCompilationAsync(project, ct);
             if (compilation is null) continue;
 
-            foreach (var tree in compilation.SyntaxTrees)
-            {
-                ct.ThrowIfCancellationRequested();
-                if (entries.Count >= maxResults) break;
-
-                var model = compilation.GetSemanticModel(tree);
-                var root = await tree.GetRootAsync(ct);
-
-                var declarations = root.DescendantNodes()
-                    .Where(n => n is TypeDeclarationSyntax
-                             or MethodDeclarationSyntax
-                             or PropertyDeclarationSyntax);
-
-                foreach (var decl in declarations)
-                {
-                    if (entries.Count >= maxResults) break;
-
-                    var symbol = model.GetDeclaredSymbol(decl, ct);
-                    if (symbol is null) continue;
-
-                    if (!MatchesKindFilter(symbol, kind)) continue;
-                    if (ShouldSkip(symbol)) continue;
-
-                    var references = await SymbolFinder.FindReferencesAsync(symbol, solution, ct);
-                    var refCount = references.Sum(r => r.Locations.Count());
-
-                    if (refCount == 0)
-                    {
-                        var location = SymbolResolver.GetLocation(symbol);
-                        entries.Add(new DeadCodeEntry(
-                            symbol.ToDisplayString(),
-                            symbol.Kind.ToString(),
-                            location.FilePath,
-                            location.Line,
-                            project.Name));
-                    }
-                }
-            }
+            await AnalyzeProjectForDeadCodeAsync(compilation, solution, workspace, project, kind, maxResults, entries, ct);
         }
 
         var result = new DeadCodeResult(entries, entries.Count);
         return JsonSerializer.Serialize(result);
+    }
+
+    private static async Task AnalyzeProjectForDeadCodeAsync(
+        Compilation compilation,
+        Solution solution,
+        WorkspaceManager workspace,
+        Project project,
+        string kind,
+        int maxResults,
+        List<DeadCodeEntry> entries,
+        CancellationToken ct)
+    {
+        foreach (var tree in compilation.SyntaxTrees)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (entries.Count >= maxResults) break;
+
+            var model = compilation.GetSemanticModel(tree);
+            var root = await tree.GetRootAsync(ct);
+
+            var declarations = root.DescendantNodes()
+                .Where(n => n is TypeDeclarationSyntax
+                         or MethodDeclarationSyntax
+                         or PropertyDeclarationSyntax);
+
+            foreach (var decl in declarations)
+            {
+                if (entries.Count >= maxResults) break;
+
+                await CheckDeclarationAsync(decl, model, solution, project, kind, entries, ct);
+            }
+        }
+    }
+
+    private static async Task CheckDeclarationAsync(
+        SyntaxNode decl,
+        SemanticModel model,
+        Solution solution,
+        Project project,
+        string kind,
+        List<DeadCodeEntry> entries,
+        CancellationToken ct)
+    {
+        var symbol = model.GetDeclaredSymbol(decl, ct);
+        if (symbol is null) return;
+
+        if (!MatchesKindFilter(symbol, kind)) return;
+        if (ShouldSkip(symbol)) return;
+
+        var references = await SymbolFinder.FindReferencesAsync(symbol, solution, ct);
+        var refCount = references.Sum(r => r.Locations.Count());
+
+        if (refCount == 0)
+        {
+            var location = SymbolResolver.GetLocation(symbol);
+            entries.Add(new DeadCodeEntry(
+                symbol.ToDisplayString(),
+                symbol.Kind.ToString(),
+                location.FilePath,
+                location.Line,
+                project.Name));
+        }
     }
 
     private static bool MatchesKindFilter(ISymbol symbol, string kind) =>
@@ -113,44 +138,39 @@ public static class FindDeadCodeTool
 
     private static bool ShouldSkip(ISymbol symbol)
     {
-        // Skip constructors and property accessors
         if (symbol is IMethodSymbol { MethodKind: MethodKind.Constructor or MethodKind.PropertyGet or MethodKind.PropertySet or MethodKind.EventAdd or MethodKind.EventRemove })
             return true;
 
-        // Skip interface implementations
-        if (symbol.ContainingType is not null)
-        {
-            foreach (var iface in symbol.ContainingType.AllInterfaces)
-            {
-                foreach (var member in iface.GetMembers())
-                {
-                    var impl = symbol.ContainingType.FindImplementationForInterfaceMember(member);
-                    if (SymbolEqualityComparer.Default.Equals(impl, symbol))
-                        return true;
-                }
-            }
-        }
+        if (IsInterfaceImplementation(symbol))
+            return true;
 
-        // Skip overrides
         if (symbol is IMethodSymbol { IsOverride: true } or IPropertySymbol { IsOverride: true })
             return true;
 
-        // Skip public API (DeclaredAccessibility == Public on a public type)
         if (symbol.DeclaredAccessibility == Accessibility.Public &&
             symbol.ContainingType?.DeclaredAccessibility == Accessibility.Public)
             return true;
 
-        // Skip entry points
         if (symbol is IMethodSymbol && EntryPointNames.Contains(symbol.Name))
             return true;
 
-        // Skip test-attributed methods
-        if (symbol is IMethodSymbol methodSymbol)
+        if (symbol is IMethodSymbol methodSymbol && HasTestAttribute(methodSymbol))
+            return true;
+
+        return false;
+    }
+
+    private static bool IsInterfaceImplementation(ISymbol symbol)
+    {
+        if (symbol.ContainingType is null)
+            return false;
+
+        foreach (var iface in symbol.ContainingType.AllInterfaces)
         {
-            foreach (var attr in methodSymbol.GetAttributes())
+            foreach (var member in iface.GetMembers())
             {
-                if (attr.AttributeClass?.Name is not null &&
-                    TestAttributes.Contains(attr.AttributeClass.Name.Replace("Attribute", "")))
+                var impl = symbol.ContainingType.FindImplementationForInterfaceMember(member);
+                if (SymbolEqualityComparer.Default.Equals(impl, symbol))
                     return true;
             }
         }
@@ -158,7 +178,19 @@ public static class FindDeadCodeTool
         return false;
     }
 
-    private static IReadOnlyList<Project> GetProjectsInScope(Solution solution, string scope, string? path)
+    private static bool HasTestAttribute(IMethodSymbol methodSymbol)
+    {
+        foreach (var attr in methodSymbol.GetAttributes())
+        {
+            if (attr.AttributeClass?.Name is not null &&
+                TestAttributes.Contains(attr.AttributeClass.Name.Replace("Attribute", "")))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static List<Project> GetProjectsInScope(Solution solution, string scope, string? path)
     {
         switch (scope.ToLowerInvariant())
         {

@@ -66,6 +66,7 @@ Instead of reading entire `.cs` files (500-2000+ tokens each), Claude Code queri
 ## Installation
 
 [![NuGet](https://img.shields.io/nuget/v/JFM.RoslynNavigator)](https://www.nuget.org/packages/JFM.RoslynNavigator/)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=jfmeyers_jfm-roslyn-navigator&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=jfmeyers_jfm-roslyn-navigator)
 
 ```bash
 dotnet tool install --global JFM.RoslynNavigator

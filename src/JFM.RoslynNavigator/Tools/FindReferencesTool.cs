@@ -70,14 +70,18 @@ public static class FindReferencesTool
             AssignmentExpressionSyntax => "assignment",
             TypeArgumentListSyntax => "type-argument",
             ParameterSyntax => "parameter",
-            MemberAccessExpressionSyntax parent => parent.Parent is InvocationExpressionSyntax
-                ? "invocation"
-                : parent.Parent is AssignmentExpressionSyntax
-                    ? "assignment"
-                    : null,
+            MemberAccessExpressionSyntax parent => ClassifyMemberAccess(parent),
             _ => null
         };
     }
+
+    private static string? ClassifyMemberAccess(MemberAccessExpressionSyntax parent) =>
+        parent.Parent switch
+        {
+            InvocationExpressionSyntax => "invocation",
+            AssignmentExpressionSyntax => "assignment",
+            _ => null
+        };
 
     private static async Task<string?> GetContextLineAsync(
         Microsoft.CodeAnalysis.FindSymbols.ReferenceLocation location,
