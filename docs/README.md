@@ -10,7 +10,8 @@
 - [Navigation Tools](tools/navigation.md) — find_symbol, find_references, find_implementations, find_callers, find_overrides
 - [Inspection Tools](tools/inspection.md) — get_public_api, get_symbol_detail, get_type_hierarchy, get_dependency_graph
 - [Project Tools](tools/project.md) — get_project_graph, get_diagnostics, get_test_coverage_map
-- [Analysis Tools](tools/analysis.md) — detect_antipatterns, detect_circular_dependencies, find_dead_code, get_module_depends_on, validate_conventions
+- [Analysis Tools](tools/analysis.md) — detect_antipatterns, detect_circular_dependencies, find_dead_code
+- [Modular Architecture Tools](tools/modular.md) — get_module_depends_on, validate_conventions
 
 ## Anti-Pattern Detectors
 
