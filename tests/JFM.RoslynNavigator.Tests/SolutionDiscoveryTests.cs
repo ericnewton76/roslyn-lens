@@ -122,10 +122,22 @@ public class SolutionDiscoveryTests
     }
 
     [Fact]
-    public void FindSolutionPath_Returns_Null_Without_Args()
+    public void FindSolutionPath_Without_Explicit_Arg_Uses_Bfs()
     {
-        var result = SolutionDiscovery.FindSolutionPath([]);
-        // May return something if run from a dir with a .sln — just ensure no crash
-        _ = result;
+        var tempDir = Path.Combine(Path.GetTempPath(), $"dd-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var cwd = Directory.GetCurrentDirectory();
+
+        try
+        {
+            Directory.SetCurrentDirectory(tempDir);
+            var result = SolutionDiscovery.FindSolutionPath([]);
+            result.ShouldBeNull();
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(cwd);
+            Directory.Delete(tempDir, true);
+        }
     }
 }
