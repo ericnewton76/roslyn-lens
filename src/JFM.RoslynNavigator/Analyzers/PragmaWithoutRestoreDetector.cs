@@ -17,60 +17,75 @@ public sealed class PragmaWithoutRestoreDetector : IAntiPatternDetector
         var root = tree.GetRoot(ct);
         var filePath = tree.FilePath;
 
+        var (disables, restores) = CollectPragmaDirectives(root, ct);
+
+        foreach (var (code, line, _) in disables.Where(d => !restores.Contains(d.Code)))
+        {
+            var codeDisplay = code == "*" ? "(all warnings)" : code;
+            yield return new AntiPatternViolation(
+                "AP007",
+                AntiPatternSeverity.Warning,
+                $"#pragma warning disable {codeDisplay} without matching restore",
+                filePath,
+                line,
+                "Add a matching #pragma warning restore after the affected code");
+        }
+    }
+
+    private static (List<(string Code, int Line, SyntaxTrivia Trivia)> Disables, HashSet<string> Restores)
+        CollectPragmaDirectives(SyntaxNode root, CancellationToken ct)
+    {
         var disables = new List<(string Code, int Line, SyntaxTrivia Trivia)>();
         var restores = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var trivia in root.DescendantTrivia())
+        foreach (var trivia in root.DescendantTrivia()
+                     .Where(t => t.IsKind(SyntaxKind.PragmaWarningDirectiveTrivia)))
         {
             ct.ThrowIfCancellationRequested();
 
-            if (trivia.IsKind(SyntaxKind.PragmaWarningDirectiveTrivia))
+            var directive = (PragmaWarningDirectiveTriviaSyntax)trivia.GetStructure()!;
+            var codes = directive.ErrorCodes.Select(e => e.ToString().Trim()).ToList();
+
+            if (directive.DisableOrRestoreKeyword.IsKind(SyntaxKind.DisableKeyword))
             {
-                var directive = (PragmaWarningDirectiveTriviaSyntax)trivia.GetStructure()!;
-                var codes = directive.ErrorCodes.Select(e => e.ToString().Trim()).ToList();
-
-                if (directive.DisableOrRestoreKeyword.IsKind(SyntaxKind.DisableKeyword))
-                {
-                    var line = trivia.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
-                    foreach (var code in codes)
-                    {
-                        disables.Add((code, line, trivia));
-                    }
-
-                    // Handle bare #pragma warning disable (no specific codes)
-                    if (codes.Count == 0)
-                    {
-                        disables.Add(("*", line, trivia));
-                    }
-                }
-                else if (directive.DisableOrRestoreKeyword.IsKind(SyntaxKind.RestoreKeyword))
-                {
-                    foreach (var code in codes)
-                    {
-                        restores.Add(code);
-                    }
-
-                    if (codes.Count == 0)
-                    {
-                        restores.Add("*");
-                    }
-                }
+                CollectDisableCodes(disables, codes, trivia);
+            }
+            else if (directive.DisableOrRestoreKeyword.IsKind(SyntaxKind.RestoreKeyword))
+            {
+                CollectRestoreCodes(restores, codes);
             }
         }
 
-        foreach (var (code, line, _) in disables)
+        return (disables, restores);
+    }
+
+    private static void CollectDisableCodes(
+        List<(string Code, int Line, SyntaxTrivia Trivia)> disables,
+        List<string> codes, SyntaxTrivia trivia)
+    {
+        var line = trivia.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+
+        foreach (var code in codes)
         {
-            if (!restores.Contains(code))
-            {
-                var codeDisplay = code == "*" ? "(all warnings)" : code;
-                yield return new AntiPatternViolation(
-                    "AP007",
-                    AntiPatternSeverity.Warning,
-                    $"#pragma warning disable {codeDisplay} without matching restore",
-                    filePath,
-                    line,
-                    "Add a matching #pragma warning restore after the affected code");
-            }
+            disables.Add((code, line, trivia));
+        }
+
+        if (codes.Count == 0)
+        {
+            disables.Add(("*", line, trivia));
+        }
+    }
+
+    private static void CollectRestoreCodes(HashSet<string> restores, List<string> codes)
+    {
+        foreach (var code in codes)
+        {
+            restores.Add(code);
+        }
+
+        if (codes.Count == 0)
+        {
+            restores.Add("*");
         }
     }
 }

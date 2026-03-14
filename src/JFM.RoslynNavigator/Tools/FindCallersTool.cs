@@ -30,7 +30,7 @@ public static class FindCallersTool
                 .ToList();
         }
 
-        var symbol = candidates.FirstOrDefault();
+        var symbol = candidates.Count > 0 ? candidates[0] : null;
         if (symbol is null)
             return JsonSerializer.Serialize(new CallersResult(methodName, [], 0));
 

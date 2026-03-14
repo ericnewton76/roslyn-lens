@@ -11,6 +11,8 @@ namespace JFM.RoslynNavigator.Tools;
 [McpServerToolType]
 public static class GetModuleDependsOnTool
 {
+    private const string ModuleSuffix = "Module";
+
     [McpServerTool(Name = "get_module_depends_on")]
     [Description("Analyze Granit module dependency tree. Finds classes inheriting from GranitModule, reads [DependsOn] attributes, and builds a dependency graph to the specified depth.")]
     public static async Task<string> ExecuteAsync(
@@ -25,39 +27,8 @@ public static class GetModuleDependsOnTool
 
         var compilations = await workspace.GetAllCompilationsAsync(ct);
 
-        // Build a map of all modules: module name -> (project, file, line, dependsOn list)
-        var moduleMap = new Dictionary<string, ModuleInfo>(StringComparer.Ordinal);
+        var moduleMap = await BuildModuleMapAsync(compilations, ct);
 
-        foreach (var (project, compilation) in compilations)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            foreach (var syntaxTree in compilation.SyntaxTrees)
-            {
-                var root = await syntaxTree.GetRootAsync(ct);
-
-                foreach (var classDecl in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
-                {
-                    var className = classDecl.Identifier.Text;
-
-                    // Match modules by name pattern or base class
-                    if (!IsModuleClass(classDecl))
-                        continue;
-
-                    var dependsOnModules = ExtractDependsOn(classDecl);
-                    var line = classDecl.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
-
-                    moduleMap[className] = new ModuleInfo(
-                        className,
-                        project.Name,
-                        syntaxTree.FilePath,
-                        line,
-                        dependsOnModules);
-                }
-            }
-        }
-
-        // Normalize module name: allow short names like "Persistence" -> "GranitPersistenceModule"
         var resolvedName = ResolveModuleName(moduleName, moduleMap);
         if (resolvedName is null || !moduleMap.ContainsKey(resolvedName))
         {
@@ -73,14 +44,12 @@ public static class GetModuleDependsOnTool
 
         if (direction.Equals("dependents", StringComparison.OrdinalIgnoreCase))
         {
-            // Reverse graph: find all modules that depend on the target
             var reverseMap = BuildReverseMap(moduleMap);
             rootDep = BuildTree(resolvedName, moduleMap, reverseMap, depth, []);
             totalModules = CountNodes(rootDep);
         }
         else
         {
-            // Forward graph: what this module depends on
             rootDep = BuildTree(resolvedName, moduleMap, null, depth, []);
             totalModules = CountNodes(rootDep);
         }
@@ -89,51 +58,67 @@ public static class GetModuleDependsOnTool
         return JsonSerializer.Serialize(result);
     }
 
-    private static bool IsModuleClass(ClassDeclarationSyntax classDecl)
+    private static async Task<Dictionary<string, ModuleInfo>> BuildModuleMapAsync(
+        IEnumerable<(Project Project, Compilation Compilation)> compilations,
+        CancellationToken ct)
     {
-        var name = classDecl.Identifier.Text;
+        var moduleMap = new Dictionary<string, ModuleInfo>(StringComparer.Ordinal);
 
-        // Name ends with "Module"
-        if (name.EndsWith("Module", StringComparison.Ordinal))
-            return true;
-
-        // Has a base class containing "Module"
-        if (classDecl.BaseList is not null)
+        foreach (var (project, compilation) in compilations)
         {
-            foreach (var baseType in classDecl.BaseList.Types)
+            ct.ThrowIfCancellationRequested();
+
+            foreach (var syntaxTree in compilation.SyntaxTrees)
             {
-                var baseTypeName = baseType.Type.ToString();
-                if (baseTypeName.Contains("Module", StringComparison.Ordinal))
-                    return true;
+                var root = await syntaxTree.GetRootAsync(ct);
+
+                foreach (var classDecl in root.DescendantNodes().OfType<ClassDeclarationSyntax>()
+                             .Where(IsModuleClass))
+                {
+                    var className = classDecl.Identifier.Text;
+                    var dependsOnModules = ExtractDependsOn(classDecl);
+                    var line = classDecl.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+
+                    moduleMap[className] = new ModuleInfo(
+                        className,
+                        project.Name,
+                        syntaxTree.FilePath,
+                        line,
+                        dependsOnModules);
+                }
             }
         }
 
-        return false;
+        return moduleMap;
+    }
+
+    private static bool IsModuleClass(ClassDeclarationSyntax classDecl)
+    {
+        if (classDecl.Identifier.Text.EndsWith(ModuleSuffix, StringComparison.Ordinal))
+            return true;
+
+        if (classDecl.BaseList is null)
+            return false;
+
+        return classDecl.BaseList.Types.Any(baseType =>
+            baseType.Type.ToString().Contains(ModuleSuffix, StringComparison.Ordinal));
     }
 
     private static List<string> ExtractDependsOn(ClassDeclarationSyntax classDecl)
     {
         var result = new List<string>();
 
-        foreach (var attrList in classDecl.AttributeLists)
+        var dependsOnArgs = classDecl.AttributeLists
+            .SelectMany(al => al.Attributes)
+            .Where(a => a.Name.ToString() is "DependsOn" or "DependsOnAttribute")
+            .Where(a => a.ArgumentList is not null)
+            .SelectMany(a => a.ArgumentList!.Arguments);
+
+        foreach (var arg in dependsOnArgs)
         {
-            foreach (var attr in attrList.Attributes)
+            if (arg.Expression is TypeOfExpressionSyntax typeOf)
             {
-                var attrName = attr.Name.ToString();
-                if (attrName is not ("DependsOn" or "DependsOnAttribute"))
-                    continue;
-
-                if (attr.ArgumentList is null)
-                    continue;
-
-                foreach (var arg in attr.ArgumentList.Arguments)
-                {
-                    // typeof(SomeModule)
-                    if (arg.Expression is TypeOfExpressionSyntax typeOf)
-                    {
-                        result.Add(typeOf.Type.ToString());
-                    }
-                }
+                result.Add(typeOf.Type.ToString());
             }
         }
 
@@ -142,32 +127,21 @@ public static class GetModuleDependsOnTool
 
     private static string? ResolveModuleName(string input, Dictionary<string, ModuleInfo> map)
     {
-        // Exact match
         if (map.ContainsKey(input))
             return input;
 
-        // Try with "Module" suffix
-        var withSuffix = input + "Module";
+        var withSuffix = input + ModuleSuffix;
         if (map.ContainsKey(withSuffix))
             return withSuffix;
 
-        // Try with "Granit" prefix
-        var withPrefix = "Granit" + input + "Module";
+        var withPrefix = "Granit" + input + ModuleSuffix;
         if (map.ContainsKey(withPrefix))
             return withPrefix;
 
-        // Case-insensitive fallback
-        foreach (var key in map.Keys)
-        {
-            if (key.Equals(input, StringComparison.OrdinalIgnoreCase) ||
-                key.Equals(withSuffix, StringComparison.OrdinalIgnoreCase) ||
-                key.Equals(withPrefix, StringComparison.OrdinalIgnoreCase))
-            {
-                return key;
-            }
-        }
-
-        return null;
+        return map.Keys.FirstOrDefault(key =>
+            key.Equals(input, StringComparison.OrdinalIgnoreCase) ||
+            key.Equals(withSuffix, StringComparison.OrdinalIgnoreCase) ||
+            key.Equals(withPrefix, StringComparison.OrdinalIgnoreCase));
     }
 
     private static Dictionary<string, List<string>> BuildReverseMap(Dictionary<string, ModuleInfo> moduleMap)
@@ -212,12 +186,10 @@ public static class GetModuleDependsOnTool
         List<string> children;
         if (reverseMap is not null)
         {
-            // Dependents direction
             children = reverseMap.GetValueOrDefault(moduleName) ?? [];
         }
         else
         {
-            // Dependencies direction
             children = info?.DependsOn
                 .Select(d => ResolveModuleName(d, moduleMap) ?? d)
                 .ToList() ?? [];

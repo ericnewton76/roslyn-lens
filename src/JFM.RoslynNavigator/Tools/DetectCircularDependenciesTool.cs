@@ -37,7 +37,6 @@ public static class DetectCircularDependenciesTool
 
     private static List<CycleEntry> DetectProjectCycles(Solution solution, string? projectFilter)
     {
-        // Build adjacency list
         var graph = new Dictionary<string, List<string>>();
 
         foreach (var project in solution.Projects)
@@ -81,52 +80,64 @@ public static class DetectCircularDependenciesTool
                 var model = compilation.GetSemanticModel(tree);
                 var root = await tree.GetRootAsync(ct);
 
-                var typeDecls = root.DescendantNodes().OfType<TypeDeclarationSyntax>();
-
-                foreach (var typeDecl in typeDecls)
+                foreach (var typeDecl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
                 {
-                    var symbol = model.GetDeclaredSymbol(typeDecl, ct);
-                    if (symbol is null) continue;
-
-                    if (symbol is not INamedTypeSymbol namedSymbol) continue;
-
-                    var typeName = namedSymbol.ToDisplayString();
-                    if (!graph.ContainsKey(typeName))
-                        graph[typeName] = [];
-
-                    // Collect dependencies from fields, properties, and base types
-                    foreach (var member in namedSymbol.GetMembers())
-                    {
-                        var depType = member switch
-                        {
-                            IFieldSymbol f => f.Type,
-                            IPropertySymbol p => p.Type,
-                            _ => null
-                        };
-
-                        if (depType is INamedTypeSymbol namedDepType &&
-                            !IsSystemType(namedDepType) &&
-                            namedDepType.ToDisplayString() != typeName)
-                        {
-                            graph[typeName].Add(namedDepType.ToDisplayString());
-                        }
-                    }
-
-                    // Base type
-                    if (namedSymbol.BaseType is not null && !IsSystemType(namedSymbol.BaseType))
-                        graph[typeName].Add(namedSymbol.BaseType.ToDisplayString());
-
-                    // Interfaces
-                    foreach (var iface in namedSymbol.Interfaces)
-                    {
-                        if (!IsSystemType(iface))
-                            graph[typeName].Add(iface.ToDisplayString());
-                    }
+                    CollectTypeDependencies(typeDecl, model, graph, ct);
                 }
             }
         }
 
         return FindCyclesDfs(graph);
+    }
+
+    private static void CollectTypeDependencies(
+        TypeDeclarationSyntax typeDecl,
+        SemanticModel model,
+        Dictionary<string, List<string>> graph,
+        CancellationToken ct)
+    {
+        if (model.GetDeclaredSymbol(typeDecl, ct) is not INamedTypeSymbol namedSymbol)
+            return;
+
+        var typeName = namedSymbol.ToDisplayString();
+        if (!graph.ContainsKey(typeName))
+            graph[typeName] = [];
+
+        CollectMemberDependencies(namedSymbol, typeName, graph);
+        CollectInheritanceDependencies(namedSymbol, typeName, graph);
+    }
+
+    private static void CollectMemberDependencies(
+        INamedTypeSymbol namedSymbol, string typeName, Dictionary<string, List<string>> graph)
+    {
+        foreach (var member in namedSymbol.GetMembers())
+        {
+            var depType = member switch
+            {
+                IFieldSymbol f => f.Type,
+                IPropertySymbol p => p.Type,
+                _ => null
+            };
+
+            if (depType is INamedTypeSymbol namedDepType &&
+                !IsSystemType(namedDepType) &&
+                namedDepType.ToDisplayString() != typeName)
+            {
+                graph[typeName].Add(namedDepType.ToDisplayString());
+            }
+        }
+    }
+
+    private static void CollectInheritanceDependencies(
+        INamedTypeSymbol namedSymbol, string typeName, Dictionary<string, List<string>> graph)
+    {
+        if (namedSymbol.BaseType is not null && !IsSystemType(namedSymbol.BaseType))
+            graph[typeName].Add(namedSymbol.BaseType.ToDisplayString());
+
+        foreach (var iface in namedSymbol.Interfaces.Where(i => !IsSystemType(i)))
+        {
+            graph[typeName].Add(iface.ToDisplayString());
+        }
     }
 
     private static List<CycleEntry> FindCyclesDfs(Dictionary<string, List<string>> graph)
@@ -136,10 +147,9 @@ public static class DetectCircularDependenciesTool
         var inStack = new HashSet<string>();
         var path = new List<string>();
 
-        foreach (var node in graph.Keys)
+        foreach (var node in graph.Keys.Where(n => !visited.Contains(n)))
         {
-            if (!visited.Contains(node))
-                Dfs(node, graph, visited, inStack, path, cycles);
+            Dfs(node, graph, visited, inStack, path, cycles);
         }
 
         return cycles;
@@ -161,25 +171,35 @@ public static class DetectCircularDependenciesTool
         {
             foreach (var neighbor in neighbors)
             {
-                if (inStack.Contains(neighbor))
-                {
-                    // Found a cycle — extract it
-                    var cycleStart = path.IndexOf(neighbor);
-                    if (cycleStart >= 0)
-                    {
-                        var cycleNodes = path.Skip(cycleStart).Append(neighbor).ToList();
-                        cycles.Add(new CycleEntry(cycleNodes));
-                    }
-                }
-                else if (!visited.Contains(neighbor))
-                {
-                    Dfs(neighbor, graph, visited, inStack, path, cycles);
-                }
+                ProcessNeighbor(neighbor, graph, visited, inStack, path, cycles);
             }
         }
 
         path.RemoveAt(path.Count - 1);
         inStack.Remove(node);
+    }
+
+    private static void ProcessNeighbor(
+        string neighbor,
+        Dictionary<string, List<string>> graph,
+        HashSet<string> visited,
+        HashSet<string> inStack,
+        List<string> path,
+        List<CycleEntry> cycles)
+    {
+        if (inStack.Contains(neighbor))
+        {
+            var cycleStart = path.IndexOf(neighbor);
+            if (cycleStart >= 0)
+            {
+                var cycleNodes = path.Skip(cycleStart).Append(neighbor).ToList();
+                cycles.Add(new CycleEntry(cycleNodes));
+            }
+        }
+        else if (!visited.Contains(neighbor))
+        {
+            Dfs(neighbor, graph, visited, inStack, path, cycles);
+        }
     }
 
     private static bool IsSystemType(INamedTypeSymbol type)

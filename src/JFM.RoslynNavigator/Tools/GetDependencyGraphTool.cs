@@ -55,46 +55,62 @@ public static class GetDependencyGraphTool
 
         if (symbol is IMethodSymbol)
         {
-            foreach (var syntaxRef in symbol.DeclaringSyntaxReferences)
-            {
-                var syntax = await syntaxRef.GetSyntaxAsync(ct);
-                var tree = syntax.SyntaxTree;
-
-                var solution = workspace.GetSolution();
-                if (solution is null) continue;
-
-                var project = solution.Projects
-                    .SelectMany(p => p.Documents)
-                    .FirstOrDefault(d => d.FilePath == tree.FilePath)?
-                    .Project;
-
-                if (project is null) continue;
-
-                var compilation = await workspace.GetCompilationAsync(project, ct);
-                if (compilation is null) continue;
-
-                var model = compilation.GetSemanticModel(tree);
-
-                var invocations = syntax.DescendantNodes()
-                    .OfType<InvocationExpressionSyntax>();
-
-                foreach (var invocation in invocations)
-                {
-                    ct.ThrowIfCancellationRequested();
-
-                    var symbolInfo = model.GetSymbolInfo(invocation, ct);
-                    var calledSymbol = symbolInfo.Symbol;
-
-                    if (calledSymbol is null) continue;
-                    if (ShouldSkip(calledSymbol)) continue;
-
-                    var childNode = await BuildGraphAsync(workspace, calledSymbol, remainingDepth - 1, visited, ct);
-                    calls.Add(childNode);
-                }
-            }
+            await CollectCallDependenciesAsync(workspace, symbol, remainingDepth, visited, calls, ct);
         }
 
         return new DependencyNode(key, location.FilePath, location.Line, calls.Count > 0 ? calls : null);
+    }
+
+    private static async Task CollectCallDependenciesAsync(
+        WorkspaceManager workspace,
+        ISymbol symbol,
+        int remainingDepth,
+        HashSet<string> visited,
+        List<DependencyNode> calls,
+        CancellationToken ct)
+    {
+        foreach (var syntaxRef in symbol.DeclaringSyntaxReferences)
+        {
+            var syntax = await syntaxRef.GetSyntaxAsync(ct);
+            var tree = syntax.SyntaxTree;
+
+            var solution = workspace.GetSolution();
+            if (solution is null) continue;
+
+            var project = solution.Projects
+                .SelectMany(p => p.Documents)
+                .FirstOrDefault(d => d.FilePath == tree.FilePath)?
+                .Project;
+
+            if (project is null) continue;
+
+            var compilation = await workspace.GetCompilationAsync(project, ct);
+            if (compilation is null) continue;
+
+            var model = compilation.GetSemanticModel(tree);
+            await CollectInvocationsAsync(syntax, model, workspace, remainingDepth, visited, calls, ct);
+        }
+    }
+
+    private static async Task CollectInvocationsAsync(
+        SyntaxNode syntax,
+        SemanticModel model,
+        WorkspaceManager workspace,
+        int remainingDepth,
+        HashSet<string> visited,
+        List<DependencyNode> calls,
+        CancellationToken ct)
+    {
+        foreach (var invocation in syntax.DescendantNodes().OfType<InvocationExpressionSyntax>())
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var calledSymbol = model.GetSymbolInfo(invocation, ct).Symbol;
+            if (calledSymbol is null || ShouldSkip(calledSymbol)) continue;
+
+            var childNode = await BuildGraphAsync(workspace, calledSymbol, remainingDepth - 1, visited, ct);
+            calls.Add(childNode);
+        }
     }
 
     private static bool ShouldSkip(ISymbol symbol)
@@ -102,12 +118,6 @@ public static class GetDependencyGraphTool
         var ns = symbol.ContainingNamespace?.ToDisplayString();
         if (ns is null) return true;
 
-        foreach (var prefix in SkippedNamespacePrefixes)
-        {
-            if (ns.StartsWith(prefix, StringComparison.Ordinal))
-                return true;
-        }
-
-        return false;
+        return SkippedNamespacePrefixes.Any(prefix => ns.StartsWith(prefix, StringComparison.Ordinal));
     }
 }

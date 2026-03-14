@@ -42,20 +42,19 @@ public sealed class LoggingInterpolationDetector : IAntiPatternDetector
             if (methodName is null || !LogMethodNames.Contains(methodName))
                 continue;
 
-            foreach (var argument in invocation.ArgumentList.Arguments)
+            var interpolatedArg = invocation.ArgumentList.Arguments
+                .FirstOrDefault(a => a.Expression is InterpolatedStringExpressionSyntax);
+
+            if (interpolatedArg is not null)
             {
-                if (argument.Expression is InterpolatedStringExpressionSyntax)
-                {
-                    var line = argument.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
-                    yield return new AntiPatternViolation(
-                        "AP006",
-                        AntiPatternSeverity.Warning,
-                        $"String interpolation in {methodName}() — bypasses structured logging",
-                        filePath,
-                        line,
-                        "Use message template with named placeholders: Log(\"User {UserId} logged in\", userId)");
-                    break; // One violation per invocation is enough
-                }
+                var line = interpolatedArg.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                yield return new AntiPatternViolation(
+                    "AP006",
+                    AntiPatternSeverity.Warning,
+                    $"String interpolation in {methodName}() — bypasses structured logging",
+                    filePath,
+                    line,
+                    "Use message template with named placeholders: Log(\"User {UserId} logged in\", userId)");
             }
         }
     }

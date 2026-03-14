@@ -50,45 +50,56 @@ public static class DetectAntiPatternsTool
                 ct.ThrowIfCancellationRequested();
                 if (violations.Count >= maxResults) break;
 
-                // File filter
-                if (file is not null)
-                {
-                    var normalizedFile = file.Replace('\\', '/');
-                    var treePath = tree.FilePath?.Replace('\\', '/');
-                    if (treePath is null || !treePath.EndsWith(normalizedFile, StringComparison.OrdinalIgnoreCase))
-                        continue;
-                }
+                if (!MatchesFileFilter(tree, file)) continue;
 
                 var model = compilation.GetSemanticModel(tree);
-
-                foreach (var detector in detectorList)
-                {
-                    if (violations.Count >= maxResults) break;
-
-                    var results = detector.Detect(tree, model, ct);
-
-                    foreach (var violation in results)
-                    {
-                        if (violations.Count >= maxResults) break;
-
-                        var severityStr = violation.Severity.ToString();
-                        if (!PassesSeverityFilter(severityStr, severity))
-                            continue;
-
-                        violations.Add(new AntiPatternEntry(
-                            violation.Id,
-                            severityStr,
-                            violation.Message,
-                            violation.File ?? tree.FilePath,
-                            violation.Line,
-                            violation.Suggestion));
-                    }
-                }
+                AnalyzeTree(model, tree, detectorList, severity, maxResults, violations, ct);
             }
         }
 
         var result = new AntiPatternsResult(violations, violations.Count);
         return JsonSerializer.Serialize(result);
+    }
+
+    private static bool MatchesFileFilter(SyntaxTree tree, string? file)
+    {
+        if (file is null) return true;
+
+        var normalizedFile = file.Replace('\\', '/');
+        var treePath = tree.FilePath?.Replace('\\', '/');
+        return treePath is not null && treePath.EndsWith(normalizedFile, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void AnalyzeTree(
+        SemanticModel model,
+        SyntaxTree tree,
+        List<IAntiPatternDetector> detectors,
+        string severity,
+        int maxResults,
+        List<AntiPatternEntry> violations,
+        CancellationToken ct)
+    {
+        foreach (var detector in detectors)
+        {
+            if (violations.Count >= maxResults) break;
+
+            foreach (var violation in detector.Detect(tree, model, ct))
+            {
+                if (violations.Count >= maxResults) break;
+
+                var severityStr = violation.Severity.ToString();
+                if (!PassesSeverityFilter(severityStr, severity))
+                    continue;
+
+                violations.Add(new AntiPatternEntry(
+                    violation.Id,
+                    severityStr,
+                    violation.Message,
+                    violation.File ?? tree.FilePath,
+                    violation.Line,
+                    violation.Suggestion));
+            }
+        }
     }
 
     private static bool PassesSeverityFilter(string violationSeverity, string minSeverity)

@@ -30,9 +30,16 @@ public static class FindImplementationsTool
 
         var solution = workspace.GetSolution()!;
 
-        var implementingSymbols = typeSymbol.TypeKind == TypeKind.Interface
-            ? await SymbolFinder.FindImplementationsAsync(typeSymbol, solution, cancellationToken: ct)
-            : (IEnumerable<ISymbol>)await SymbolFinder.FindDerivedClassesAsync(typeSymbol, solution, cancellationToken: ct);
+        IEnumerable<ISymbol> implementingSymbols;
+        if (typeSymbol.TypeKind == TypeKind.Interface)
+        {
+            implementingSymbols = await SymbolFinder.FindImplementationsAsync(typeSymbol, solution, cancellationToken: ct);
+        }
+        else
+        {
+            var derivedClasses = await SymbolFinder.FindDerivedClassesAsync(typeSymbol, solution, cancellationToken: ct);
+            implementingSymbols = derivedClasses;
+        }
 
         var implementations = implementingSymbols.Select(s =>
         {

@@ -12,6 +12,11 @@ namespace JFM.RoslynNavigator.Tools;
 [McpServerToolType]
 public static class ValidateGranitConventionsTool
 {
+    private const string CategoryNaming = "naming";
+    private const string CategorySecurity = "security";
+    private const string CategoryEfcore = "efcore";
+    private const string CategoryDependencies = "dependencies";
+
     private static readonly IAntiPatternDetector[] NamingDetectors =
     [
         new DtoSuffixDetector()
@@ -66,57 +71,7 @@ public static class ValidateGranitConventionsTool
                 continue;
             }
 
-            foreach (var syntaxTree in compilation.SyntaxTrees)
-            {
-                ct.ThrowIfCancellationRequested();
-
-                if (file is not null &&
-                    !syntaxTree.FilePath.Equals(file, StringComparison.OrdinalIgnoreCase) &&
-                    !syntaxTree.FilePath.EndsWith(file, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                SemanticModel? model = null;
-
-                var detectors = GetDetectorsForCategory(checkCategory);
-                foreach (var detector in detectors)
-                {
-                    if (detector.RequiresSemanticModel)
-                    {
-                        model ??= compilation.GetSemanticModel(syntaxTree);
-                    }
-
-                    foreach (var violation in detector.Detect(syntaxTree, model, ct))
-                    {
-                        var category = CategorizeViolation(violation.Id);
-                        violations.Add(new ConventionViolation(
-                            category,
-                            violation.Id,
-                            violation.Severity.ToString(),
-                            violation.Message,
-                            violation.File,
-                            violation.Line,
-                            violation.Suggestion));
-                    }
-                }
-
-                // Category-specific structural checks
-                if (checkCategory is "all" or "naming")
-                {
-                    violations.AddRange(CheckEndpointPrefixConventions(syntaxTree, ct));
-                }
-
-                if (checkCategory is "all" or "efcore")
-                {
-                    violations.AddRange(CheckApplyGranitConventions(syntaxTree, ct));
-                }
-
-                if (checkCategory is "all" or "dependencies")
-                {
-                    violations.AddRange(await CheckDependsOnConventions(syntaxTree, project, compilation, ct));
-                }
-            }
+            await AnalyzeCompilationAsync(compilation, project, file, checkCategory, violations, ct);
         }
 
         var byCategory = violations
@@ -127,22 +82,105 @@ public static class ValidateGranitConventionsTool
         return JsonSerializer.Serialize(result);
     }
 
-    private static IEnumerable<IAntiPatternDetector> GetDetectorsForCategory(string category) =>
+    private static async Task AnalyzeCompilationAsync(
+        Compilation compilation,
+        Project project,
+        string? file,
+        string checkCategory,
+        List<ConventionViolation> violations,
+        CancellationToken ct)
+    {
+        foreach (var syntaxTree in compilation.SyntaxTrees)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (!MatchesFileFilter(syntaxTree, file))
+                continue;
+
+            AnalyzeSyntaxTree(syntaxTree, compilation, checkCategory, violations, ct);
+            await AnalyzeStructuralConventionsAsync(syntaxTree, project, compilation, checkCategory, violations, ct);
+        }
+    }
+
+    private static bool MatchesFileFilter(SyntaxTree syntaxTree, string? file)
+    {
+        if (file is null) return true;
+
+        return syntaxTree.FilePath.Equals(file, StringComparison.OrdinalIgnoreCase) ||
+               syntaxTree.FilePath.EndsWith(file, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void AnalyzeSyntaxTree(
+        SyntaxTree syntaxTree,
+        Compilation compilation,
+        string checkCategory,
+        List<ConventionViolation> violations,
+        CancellationToken ct)
+    {
+        SemanticModel? model = null;
+
+        foreach (var detector in GetDetectorsForCategory(checkCategory))
+        {
+            if (detector.RequiresSemanticModel)
+            {
+                model ??= compilation.GetSemanticModel(syntaxTree);
+            }
+
+            foreach (var violation in detector.Detect(syntaxTree, model, ct))
+            {
+                var category = CategorizeViolation(violation.Id);
+                violations.Add(new ConventionViolation(
+                    category,
+                    violation.Id,
+                    violation.Severity.ToString(),
+                    violation.Message,
+                    violation.File,
+                    violation.Line,
+                    violation.Suggestion));
+            }
+        }
+    }
+
+    private static async Task AnalyzeStructuralConventionsAsync(
+        SyntaxTree syntaxTree,
+        Project project,
+        Compilation compilation,
+        string checkCategory,
+        List<ConventionViolation> violations,
+        CancellationToken ct)
+    {
+        if (checkCategory is "all" or CategoryNaming)
+        {
+            violations.AddRange(CheckEndpointPrefixConventions(syntaxTree, ct));
+        }
+
+        if (checkCategory is "all" or CategoryEfcore)
+        {
+            violations.AddRange(CheckApplyGranitConventions(syntaxTree, ct));
+        }
+
+        if (checkCategory is "all" or CategoryDependencies)
+        {
+            violations.AddRange(await CheckDependsOnConventions(syntaxTree, ct));
+        }
+    }
+
+    private static IAntiPatternDetector[] GetDetectorsForCategory(string category) =>
         category.ToLowerInvariant() switch
         {
-            "naming" => NamingDetectors,
-            "security" => SecurityDetectors,
-            "efcore" => EfCoreDetectors,
-            "dependencies" => [], // Handled by structural checks
+            CategoryNaming => NamingDetectors,
+            CategorySecurity => SecurityDetectors,
+            CategoryEfcore => EfCoreDetectors,
+            CategoryDependencies => [], // Handled by structural checks
             _ => AllGranitDetectors
         };
 
     private static string CategorizeViolation(string id) =>
         id switch
         {
-            "GR-DTO" => "naming",
-            "GR-SECRET" => "security",
-            "GR-SYNC-EF" or "AP009" => "efcore",
+            "GR-DTO" => CategoryNaming,
+            "GR-SECRET" => CategorySecurity,
+            "GR-SYNC-EF" or "AP009" => CategoryEfcore,
             "GR-CFGAWAIT" => "async",
             "GR-GUID" or "GR-BADREQ" or "GR-REGEX" or "GR-SLEEP" or "GR-CONSOLE" => "conventions",
             _ => "other"
@@ -154,8 +192,6 @@ public static class ValidateGranitConventionsTool
         var root = tree.GetRoot(ct);
         var filePath = tree.FilePath;
 
-        // Check for endpoint DTO types that lack a module-context prefix
-        // Generic names like "CreateRequest", "UpdateRequest", "DeleteRequest" without prefix
         var genericPrefixes = new[] { "Create", "Update", "Delete", "Get", "List", "Search" };
 
         foreach (var typeDecl in root.DescendantNodes())
@@ -184,7 +220,7 @@ public static class ValidateGranitConventionsTool
                 {
                     var line = typeDecl.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
                     yield return new ConventionViolation(
-                        "naming",
+                        CategoryNaming,
                         "GR-ENDPOINT-PREFIX",
                         "Warning",
                         $"Endpoint DTO '{name}' uses a generic name — OpenAPI flattens namespaces causing schema conflicts",
@@ -202,24 +238,13 @@ public static class ValidateGranitConventionsTool
         var root = tree.GetRoot(ct);
         var filePath = tree.FilePath;
 
-        // Find DbContext-derived classes and check for ApplyGranitConventions in OnModelCreating
         foreach (var classDecl in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
         {
             ct.ThrowIfCancellationRequested();
 
-            if (classDecl.BaseList is null)
+            if (!IsDbContextClass(classDecl))
                 continue;
 
-            var isDbContext = classDecl.BaseList.Types.Any(t =>
-            {
-                var typeName = t.Type.ToString();
-                return typeName.Contains("DbContext", StringComparison.Ordinal);
-            });
-
-            if (!isDbContext)
-                continue;
-
-            // Find OnModelCreating method
             var onModelCreating = classDecl.Members
                 .OfType<MethodDeclarationSyntax>()
                 .FirstOrDefault(m => m.Identifier.Text == "OnModelCreating");
@@ -227,7 +252,6 @@ public static class ValidateGranitConventionsTool
             if (onModelCreating is null)
                 continue;
 
-            // Check if ApplyGranitConventions is called
             var methodBody = onModelCreating.Body?.ToString() ??
                              onModelCreating.ExpressionBody?.ToString() ??
                              string.Empty;
@@ -236,7 +260,7 @@ public static class ValidateGranitConventionsTool
             {
                 var line = onModelCreating.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
                 yield return new ConventionViolation(
-                    "efcore",
+                    CategoryEfcore,
                     "GR-CONVENTIONS-MISSING",
                     "Error",
                     $"DbContext '{classDecl.Identifier.Text}' OnModelCreating does not call ApplyGranitConventions()",
@@ -245,12 +269,11 @@ public static class ValidateGranitConventionsTool
                     "Add modelBuilder.ApplyGranitConventions(currentTenant, dataFilter) at the end of OnModelCreating");
             }
 
-            // Check for manual HasQueryFilter — conflicts with ApplyGranitConventions
             if (methodBody.Contains("HasQueryFilter", StringComparison.Ordinal))
             {
                 var line = onModelCreating.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
                 yield return new ConventionViolation(
-                    "efcore",
+                    CategoryEfcore,
                     "GR-MANUAL-QUERYFILTER",
                     "Warning",
                     $"DbContext '{classDecl.Identifier.Text}' uses manual HasQueryFilter — conflicts with ApplyGranitConventions",
@@ -261,8 +284,16 @@ public static class ValidateGranitConventionsTool
         }
     }
 
+    private static bool IsDbContextClass(ClassDeclarationSyntax classDecl)
+    {
+        if (classDecl.BaseList is null) return false;
+
+        return classDecl.BaseList.Types.Any(t =>
+            t.Type.ToString().Contains("DbContext", StringComparison.Ordinal));
+    }
+
     private static async Task<IEnumerable<ConventionViolation>> CheckDependsOnConventions(
-        SyntaxTree tree, Project project, Compilation compilation, CancellationToken ct)
+        SyntaxTree tree, CancellationToken ct)
     {
         var root = await tree.GetRootAsync(ct);
         var filePath = tree.FilePath;
@@ -272,86 +303,79 @@ public static class ValidateGranitConventionsTool
         {
             ct.ThrowIfCancellationRequested();
 
-            var className = classDecl.Identifier.Text;
-            if (!className.EndsWith("Module", StringComparison.Ordinal))
+            if (!IsModuleClass(classDecl))
                 continue;
 
-            if (classDecl.BaseList is null)
-                continue;
-
-            var isModule = classDecl.BaseList.Types.Any(t =>
-                t.Type.ToString().Contains("Module", StringComparison.Ordinal));
-
-            if (!isModule)
-                continue;
-
-            // Extract [DependsOn] types
-            var dependsOnTypes = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var attrList in classDecl.AttributeLists)
-            {
-                foreach (var attr in attrList.Attributes)
-                {
-                    var attrName = attr.Name.ToString();
-                    if (attrName is not ("DependsOn" or "DependsOnAttribute"))
-                        continue;
-
-                    if (attr.ArgumentList is null)
-                        continue;
-
-                    foreach (var arg in attr.ArgumentList.Arguments)
-                    {
-                        if (arg.Expression is TypeOfExpressionSyntax typeOf)
-                        {
-                            dependsOnTypes.Add(typeOf.Type.ToString());
-                        }
-                    }
-                }
-            }
-
-            // Get project references
-            var projectRefs = project.ProjectReferences
-                .Select(r =>
-                {
-                    var solution = compilation.References
-                        .OfType<CompilationReference>()
-                        .FirstOrDefault(c => c.Compilation.AssemblyName?.Contains(
-                            r.ProjectId.Id.ToString(), StringComparison.Ordinal) == true);
-                    return solution?.Compilation.AssemblyName;
-                })
-                .Where(n => n is not null)
-                .ToList();
-
-            // Check: Granit.Core should never be in DependsOn (it is implicit)
-            if (dependsOnTypes.Any(t => t.Contains("GranitCoreModule", StringComparison.Ordinal)))
-            {
-                var line = classDecl.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
-                violations.Add(new ConventionViolation(
-                    "dependencies",
-                    "GR-DEPS-CORE",
-                    "Warning",
-                    $"Module '{className}' declares DependsOn(GranitCoreModule) — Granit.Core is implicit",
-                    filePath,
-                    line,
-                    "Remove DependsOn(typeof(GranitCoreModule)); it is always available"));
-            }
-
-            // Check alphabetical order of DependsOn entries
-            var dependsOnList = dependsOnTypes.ToList();
-            var sorted = dependsOnList.OrderBy(d => d, StringComparer.Ordinal).ToList();
-            if (!dependsOnList.SequenceEqual(sorted))
-            {
-                var line = classDecl.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
-                violations.Add(new ConventionViolation(
-                    "dependencies",
-                    "GR-DEPS-ORDER",
-                    "Info",
-                    $"Module '{className}' DependsOn entries are not in alphabetical order",
-                    filePath,
-                    line,
-                    "Sort DependsOn entries alphabetically by module name"));
-            }
+            ValidateModuleDependsOn(classDecl, filePath, violations);
         }
 
         return violations;
+    }
+
+    private static bool IsModuleClass(ClassDeclarationSyntax classDecl)
+    {
+        if (!classDecl.Identifier.Text.EndsWith("Module", StringComparison.Ordinal))
+            return false;
+
+        if (classDecl.BaseList is null)
+            return false;
+
+        return classDecl.BaseList.Types.Any(t =>
+            t.Type.ToString().Contains("Module", StringComparison.Ordinal));
+    }
+
+    private static void ValidateModuleDependsOn(
+        ClassDeclarationSyntax classDecl, string? filePath, List<ConventionViolation> violations)
+    {
+        var className = classDecl.Identifier.Text;
+        var dependsOnTypes = ExtractDependsOnTypes(classDecl);
+
+        if (dependsOnTypes.Any(t => t.Contains("GranitCoreModule", StringComparison.Ordinal)))
+        {
+            var line = classDecl.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+            violations.Add(new ConventionViolation(
+                CategoryDependencies,
+                "GR-DEPS-CORE",
+                "Warning",
+                $"Module '{className}' declares DependsOn(GranitCoreModule) — Granit.Core is implicit",
+                filePath,
+                line,
+                "Remove DependsOn(typeof(GranitCoreModule)); it is always available"));
+        }
+
+        var dependsOnList = dependsOnTypes.ToList();
+        var sorted = dependsOnList.OrderBy(d => d, StringComparer.Ordinal).ToList();
+        if (!dependsOnList.SequenceEqual(sorted))
+        {
+            var line = classDecl.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+            violations.Add(new ConventionViolation(
+                CategoryDependencies,
+                "GR-DEPS-ORDER",
+                "Info",
+                $"Module '{className}' DependsOn entries are not in alphabetical order",
+                filePath,
+                line,
+                "Sort DependsOn entries alphabetically by module name"));
+        }
+    }
+
+    private static HashSet<string> ExtractDependsOnTypes(ClassDeclarationSyntax classDecl)
+    {
+        var types = new HashSet<string>(StringComparer.Ordinal);
+
+        var typeOfArgs = classDecl.AttributeLists
+            .SelectMany(al => al.Attributes)
+            .Where(a => a.Name.ToString() is "DependsOn" or "DependsOnAttribute")
+            .Where(a => a.ArgumentList is not null)
+            .SelectMany(a => a.ArgumentList!.Arguments)
+            .Select(arg => arg.Expression)
+            .OfType<TypeOfExpressionSyntax>();
+
+        foreach (var typeOf in typeOfArgs)
+        {
+            types.Add(typeOf.Type.ToString());
+        }
+
+        return types;
     }
 }

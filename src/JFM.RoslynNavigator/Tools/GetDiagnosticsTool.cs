@@ -26,68 +26,87 @@ public static class GetDiagnosticsTool
             return JsonSerializer.Serialize(new { error = "No solution loaded" });
 
         var minSeverity = ParseSeverity(severityFilter);
-        var diagnostics = new List<DiagnosticInfo>();
 
-        switch (scope.ToLowerInvariant())
+        return scope.ToLowerInvariant() switch
         {
-            case "file":
-            {
-                if (path is null)
-                    return JsonSerializer.Serialize(new { error = "Path is required for file scope" });
+            "file" => await AnalyzeFileScopeAsync(workspace, solution, path, minSeverity, ct),
+            "project" => await AnalyzeProjectScopeAsync(workspace, solution, path, minSeverity, ct),
+            _ => await AnalyzeSolutionScopeAsync(workspace, solution, minSeverity, ct)
+        };
+    }
 
-                var normalizedPath = path.Replace('\\', '/');
-                foreach (var project in solution.Projects)
-                {
-                    var doc = project.Documents
-                        .FirstOrDefault(d => d.FilePath?.Replace('\\', '/').EndsWith(normalizedPath, StringComparison.OrdinalIgnoreCase) == true);
+    private static async Task<string> AnalyzeFileScopeAsync(
+        WorkspaceManager workspace, Solution solution, string? path,
+        DiagnosticSeverity minSeverity, CancellationToken ct)
+    {
+        if (path is null)
+            return JsonSerializer.Serialize(new { error = "Path is required for file scope" });
 
-                    if (doc is null) continue;
+        var diagnostics = new List<DiagnosticInfo>();
+        var normalizedPath = path.Replace('\\', '/');
 
-                    var compilation = await workspace.GetCompilationAsync(project, ct);
-                    if (compilation is null) continue;
+        foreach (var project in solution.Projects)
+        {
+            var doc = project.Documents
+                .FirstOrDefault(d => d.FilePath?.Replace('\\', '/').EndsWith(normalizedPath, StringComparison.OrdinalIgnoreCase) == true);
 
-                    var tree = await doc.GetSyntaxTreeAsync(ct);
-                    if (tree is null) continue;
+            if (doc is null) continue;
 
-                    var model = compilation.GetSemanticModel(tree);
-                    CollectDiagnostics(model.GetDiagnostics(cancellationToken: ct), minSeverity, diagnostics);
-                    break;
-                }
+            var compilation = await workspace.GetCompilationAsync(project, ct);
+            if (compilation is null) continue;
 
-                break;
-            }
-            case "project":
-            {
-                if (path is null)
-                    return JsonSerializer.Serialize(new { error = "Path is required for project scope" });
+            var tree = await doc.GetSyntaxTreeAsync(ct);
+            if (tree is null) continue;
 
-                var project = solution.Projects
-                    .FirstOrDefault(p => p.Name.Equals(path, StringComparison.OrdinalIgnoreCase)
-                        || (p.FilePath?.Replace('\\', '/').EndsWith(path.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase) == true));
-
-                if (project is null)
-                    return JsonSerializer.Serialize(new { error = $"Project '{path}' not found" });
-
-                var compilation = await workspace.GetCompilationAsync(project, ct);
-                if (compilation is not null)
-                    CollectDiagnostics(compilation.GetDiagnostics(ct), minSeverity, diagnostics);
-
-                break;
-            }
-            default: // solution
-            {
-                foreach (var project in solution.Projects)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    var compilation = await workspace.GetCompilationAsync(project, ct);
-                    if (compilation is not null)
-                        CollectDiagnostics(compilation.GetDiagnostics(ct), minSeverity, diagnostics);
-                }
-
-                break;
-            }
+            var model = compilation.GetSemanticModel(tree);
+            CollectDiagnostics(model.GetDiagnostics(cancellationToken: ct), minSeverity, diagnostics);
+            break;
         }
 
+        return SerializeResult(diagnostics, "file");
+    }
+
+    private static async Task<string> AnalyzeProjectScopeAsync(
+        WorkspaceManager workspace, Solution solution, string? path,
+        DiagnosticSeverity minSeverity, CancellationToken ct)
+    {
+        if (path is null)
+            return JsonSerializer.Serialize(new { error = "Path is required for project scope" });
+
+        var project = solution.Projects
+            .FirstOrDefault(p => p.Name.Equals(path, StringComparison.OrdinalIgnoreCase)
+                || (p.FilePath?.Replace('\\', '/').EndsWith(path.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase) == true));
+
+        if (project is null)
+            return JsonSerializer.Serialize(new { error = $"Project '{path}' not found" });
+
+        var diagnostics = new List<DiagnosticInfo>();
+        var compilation = await workspace.GetCompilationAsync(project, ct);
+        if (compilation is not null)
+            CollectDiagnostics(compilation.GetDiagnostics(ct), minSeverity, diagnostics);
+
+        return SerializeResult(diagnostics, "project");
+    }
+
+    private static async Task<string> AnalyzeSolutionScopeAsync(
+        WorkspaceManager workspace, Solution solution,
+        DiagnosticSeverity minSeverity, CancellationToken ct)
+    {
+        var diagnostics = new List<DiagnosticInfo>();
+
+        foreach (var project in solution.Projects)
+        {
+            ct.ThrowIfCancellationRequested();
+            var compilation = await workspace.GetCompilationAsync(project, ct);
+            if (compilation is not null)
+                CollectDiagnostics(compilation.GetDiagnostics(ct), minSeverity, diagnostics);
+        }
+
+        return SerializeResult(diagnostics, "solution");
+    }
+
+    private static string SerializeResult(List<DiagnosticInfo> diagnostics, string scope)
+    {
         var result = new DiagnosticsResult(diagnostics, diagnostics.Count, scope);
         return JsonSerializer.Serialize(result);
     }
@@ -97,10 +116,8 @@ public static class GetDiagnosticsTool
         DiagnosticSeverity minSeverity,
         List<DiagnosticInfo> target)
     {
-        foreach (var diag in source)
+        foreach (var diag in source.Where(d => d.Severity >= minSeverity))
         {
-            if (diag.Severity < minSeverity) continue;
-
             var lineSpan = diag.Location.GetMappedLineSpan();
             target.Add(new DiagnosticInfo(
                 diag.Id,
