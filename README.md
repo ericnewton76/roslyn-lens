@@ -26,7 +26,7 @@ Instead of reading entire `.cs` files (500-2000+ tokens each), Claude Code queri
 | `detect_antipatterns` | 19 anti-pattern detectors |
 | `detect_circular_dependencies` | Project and type-level cycle detection |
 | `get_module_depends_on` | `[DependsOn]` attribute graph (modular monoliths) |
-| `validate_granit_conventions` | Convention violation checker |
+| `validate_conventions` | Convention violation checker |
 
 ### 19 Anti-Pattern Detectors
 
