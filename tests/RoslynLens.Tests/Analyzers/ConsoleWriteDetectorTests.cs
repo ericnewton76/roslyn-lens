@@ -4,66 +4,64 @@ using Shouldly;
 
 namespace RoslynLens.Tests.Analyzers;
 
-public class AsyncVoidDetectorTests
+public class ConsoleWriteDetectorTests
 {
-    private readonly AsyncVoidDetector _detector = new();
+    private readonly ConsoleWriteDetector _detector = new();
 
     [Fact]
-    public void Detects_Async_Void_Method()
-    {
-        const string source = """
-            using System.Threading.Tasks;
-            public class Foo
-            {
-                public async void DoWork() { await Task.Delay(1); }
-            }
-            """;
-
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var violations = _detector.Detect(tree, null, TestContext.Current.CancellationToken).ToList();
-        violations.ShouldContain(v => v.Id == "AP001");
-    }
-
-    [Fact]
-    public void Ignores_Async_Task_Method()
-    {
-        const string source = """
-            using System.Threading.Tasks;
-            public class Foo
-            {
-                public async Task DoWork() { await Task.Delay(1); }
-            }
-            """;
-
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var violations = _detector.Detect(tree, null, TestContext.Current.CancellationToken).ToList();
-        violations.ShouldBeEmpty();
-    }
-
-    [Fact]
-    public void Ignores_Event_Handler()
+    public void Detects_Console_WriteLine()
     {
         const string source = """
             using System;
-            using System.Threading.Tasks;
             public class Foo
             {
-                public async void OnClick(object sender, EventHandler e) { await Task.Delay(1); }
+                void M() { Console.WriteLine("hello"); }
             }
             """;
 
         var tree = CSharpSyntaxTree.ParseText(source);
         var violations = _detector.Detect(tree, null, TestContext.Current.CancellationToken).ToList();
-        violations.ShouldBeEmpty();
+        violations.ShouldContain(v => v.Id == "GR-CONSOLE");
     }
 
     [Fact]
-    public void Ignores_Non_Async_Void_Method()
+    public void Detects_Console_Write()
+    {
+        const string source = """
+            using System;
+            public class Foo
+            {
+                void M() { Console.Write("hello"); }
+            }
+            """;
+
+        var tree = CSharpSyntaxTree.ParseText(source);
+        var violations = _detector.Detect(tree, null, TestContext.Current.CancellationToken).ToList();
+        violations.ShouldContain(v => v.Id == "GR-CONSOLE");
+    }
+
+    [Fact]
+    public void Detects_Fully_Qualified_Console_WriteLine()
     {
         const string source = """
             public class Foo
             {
-                public void DoWork() { }
+                void M() { System.Console.WriteLine("hello"); }
+            }
+            """;
+
+        var tree = CSharpSyntaxTree.ParseText(source);
+        var violations = _detector.Detect(tree, null, TestContext.Current.CancellationToken).ToList();
+        violations.ShouldContain(v => v.Id == "GR-CONSOLE");
+    }
+
+    [Fact]
+    public void Ignores_Logger_Calls()
+    {
+        const string source = """
+            public class Foo
+            {
+                void M() { _logger.LogInformation("hello"); }
             }
             """;
 

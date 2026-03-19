@@ -4,66 +4,49 @@ using Shouldly;
 
 namespace RoslynLens.Tests.Analyzers;
 
-public class AsyncVoidDetectorTests
+public class ThreadSleepDetectorTests
 {
-    private readonly AsyncVoidDetector _detector = new();
+    private readonly ThreadSleepDetector _detector = new();
 
     [Fact]
-    public void Detects_Async_Void_Method()
+    public void Detects_Thread_Sleep()
     {
         const string source = """
-            using System.Threading.Tasks;
+            using System.Threading;
             public class Foo
             {
-                public async void DoWork() { await Task.Delay(1); }
+                void M() { Thread.Sleep(1000); }
             }
             """;
 
         var tree = CSharpSyntaxTree.ParseText(source);
         var violations = _detector.Detect(tree, null, TestContext.Current.CancellationToken).ToList();
-        violations.ShouldContain(v => v.Id == "AP001");
+        violations.ShouldContain(v => v.Id == "GR-SLEEP");
     }
 
     [Fact]
-    public void Ignores_Async_Task_Method()
+    public void Detects_Fully_Qualified_Thread_Sleep()
     {
         const string source = """
-            using System.Threading.Tasks;
             public class Foo
             {
-                public async Task DoWork() { await Task.Delay(1); }
+                void M() { System.Threading.Thread.Sleep(500); }
             }
             """;
 
         var tree = CSharpSyntaxTree.ParseText(source);
         var violations = _detector.Detect(tree, null, TestContext.Current.CancellationToken).ToList();
-        violations.ShouldBeEmpty();
+        violations.ShouldContain(v => v.Id == "GR-SLEEP");
     }
 
     [Fact]
-    public void Ignores_Event_Handler()
+    public void Ignores_Task_Delay()
     {
         const string source = """
-            using System;
             using System.Threading.Tasks;
             public class Foo
             {
-                public async void OnClick(object sender, EventHandler e) { await Task.Delay(1); }
-            }
-            """;
-
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var violations = _detector.Detect(tree, null, TestContext.Current.CancellationToken).ToList();
-        violations.ShouldBeEmpty();
-    }
-
-    [Fact]
-    public void Ignores_Non_Async_Void_Method()
-    {
-        const string source = """
-            public class Foo
-            {
-                public void DoWork() { }
+                async Task M() { await Task.Delay(1000); }
             }
             """;
 

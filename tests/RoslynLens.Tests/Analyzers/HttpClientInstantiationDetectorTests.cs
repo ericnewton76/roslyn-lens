@@ -4,66 +4,65 @@ using Shouldly;
 
 namespace RoslynLens.Tests.Analyzers;
 
-public class AsyncVoidDetectorTests
+public class HttpClientInstantiationDetectorTests
 {
-    private readonly AsyncVoidDetector _detector = new();
+    private readonly HttpClientInstantiationDetector _detector = new();
 
     [Fact]
-    public void Detects_Async_Void_Method()
+    public void Detects_New_HttpClient()
     {
         const string source = """
-            using System.Threading.Tasks;
+            using System.Net.Http;
             public class Foo
             {
-                public async void DoWork() { await Task.Delay(1); }
+                void M() { var client = new HttpClient(); }
             }
             """;
 
         var tree = CSharpSyntaxTree.ParseText(source);
         var violations = _detector.Detect(tree, null, TestContext.Current.CancellationToken).ToList();
-        violations.ShouldContain(v => v.Id == "AP001");
+        violations.ShouldContain(v => v.Id == "AP003");
     }
 
     [Fact]
-    public void Ignores_Async_Task_Method()
+    public void Detects_Fully_Qualified_New_HttpClient()
     {
         const string source = """
-            using System.Threading.Tasks;
             public class Foo
             {
-                public async Task DoWork() { await Task.Delay(1); }
+                void M() { var client = new System.Net.Http.HttpClient(); }
             }
             """;
 
         var tree = CSharpSyntaxTree.ParseText(source);
         var violations = _detector.Detect(tree, null, TestContext.Current.CancellationToken).ToList();
-        violations.ShouldBeEmpty();
+        violations.ShouldContain(v => v.Id == "AP003");
     }
 
     [Fact]
-    public void Ignores_Event_Handler()
+    public void Detects_Implicit_New_HttpClient()
     {
         const string source = """
-            using System;
-            using System.Threading.Tasks;
+            using System.Net.Http;
             public class Foo
             {
-                public async void OnClick(object sender, EventHandler e) { await Task.Delay(1); }
+                void M() { HttpClient client = new(); }
             }
             """;
 
         var tree = CSharpSyntaxTree.ParseText(source);
         var violations = _detector.Detect(tree, null, TestContext.Current.CancellationToken).ToList();
-        violations.ShouldBeEmpty();
+        violations.ShouldContain(v => v.Id == "AP003");
     }
 
     [Fact]
-    public void Ignores_Non_Async_Void_Method()
+    public void Ignores_Other_Object_Creation()
     {
         const string source = """
+            using System.Collections.Generic;
             public class Foo
             {
-                public void DoWork() { }
+                void M() { var list = new List<string>(); }
             }
             """;
 

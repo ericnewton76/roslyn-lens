@@ -1,6 +1,8 @@
 # RoslynLens
 
-[![NuGet](https://img.shields.io/nuget/v/RoslynLens.svg)](https://www.nuget.org/packages/RoslynLens/)
+[![GitHub](https://img.shields.io/badge/github-repo-blue?logo=github)](https://github.com/jfmeyers/roslyn-lens)
+[![NuGet](https://img.shields.io/nuget/v/RoslynLens)](https://www.nuget.org/packages/RoslynLens/)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=jfmeyers_roslyn-lens&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=jfmeyers_roslyn-lens)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 A token-efficient MCP (Model Context Protocol) server for .NET codebase navigation, powered by Roslyn semantic analysis. Designed for use with [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
@@ -27,7 +29,7 @@ Instead of reading entire `.cs` files (500-2000+ tokens each), Claude Code queri
 | `get_diagnostics` | Compiler warnings and errors |
 | `get_test_coverage_map` | Heuristic test coverage mapping |
 | `get_complexity_metrics` | Cyclomatic, cognitive complexity, nesting depth, LOC |
-| `detect_antipatterns` | 19 anti-pattern detectors |
+| `detect_antipatterns` | 18 anti-pattern detectors |
 | `detect_circular_dependencies` | Project and type-level cycle detection |
 | `detect_duplicates` | Structurally similar code detection via AST fingerprinting |
 | `get_module_depends_on` | `[DependsOn]` attribute graph (modular monoliths) |
@@ -42,7 +44,7 @@ Instead of reading entire `.cs` files (500-2000+ tokens each), Claude Code queri
 | `get_symbol_detail_batch` | Get details of multiple symbols in one call |
 | `resolve_external_source` | Resolve NuGet/framework source via SourceLink or decompilation |
 
-### 19 Anti-Pattern Detectors
+### 18 Anti-Pattern Detectors
 
 **General .NET detectors:**
 
@@ -78,9 +80,6 @@ Instead of reading entire `.cs` files (500-2000+ tokens each), Claude Code queri
 - A .NET solution (`.sln` or `.slnx`)
 
 ## Installation
-
-[![NuGet](https://img.shields.io/nuget/v/RoslynLens)](https://www.nuget.org/packages/RoslynLens/)
-[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=jfmeyers_roslyn-lens&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=jfmeyers_roslyn-lens)
 
 ```bash
 dotnet tool install --global RoslynLens
@@ -167,11 +166,12 @@ src/RoslynLens/
 ├── WorkspaceInitializer.cs     # Background solution loading
 ├── SymbolResolver.cs           # Cross-project symbol resolution + fuzzy FQN
 ├── NavigatorConfig.cs          # Environment variable configuration
+├── WorkspaceState.cs           # Workspace loading state enum
 ├── ComplexityAnalyzer.cs       # Cyclomatic/cognitive complexity metrics
 ├── DuplicateCodeDetector.cs    # AST fingerprinting for duplicate detection
 ├── ExternalSourceResolver.cs   # SourceLink + decompilation for NuGet deps
-├── Tools/                      # 27 MCP tool implementations
-├── Analyzers/                  # 19 anti-pattern detectors
+├── Tools/                      # 28 MCP tool implementations
+├── Analyzers/                  # 18 anti-pattern detectors
 └── Responses/                  # Token-optimized DTOs
 ```
 

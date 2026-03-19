@@ -4,34 +4,49 @@ using Shouldly;
 
 namespace RoslynLens.Tests.Analyzers;
 
-public class AsyncVoidDetectorTests
+public class TypedResultsBadRequestDetectorTests
 {
-    private readonly AsyncVoidDetector _detector = new();
+    private readonly TypedResultsBadRequestDetector _detector = new();
 
     [Fact]
-    public void Detects_Async_Void_Method()
+    public void Detects_TypedResults_BadRequest()
     {
         const string source = """
-            using System.Threading.Tasks;
             public class Foo
             {
-                public async void DoWork() { await Task.Delay(1); }
+                object M() => TypedResults.BadRequest("error");
             }
             """;
 
         var tree = CSharpSyntaxTree.ParseText(source);
         var violations = _detector.Detect(tree, null, TestContext.Current.CancellationToken).ToList();
-        violations.ShouldContain(v => v.Id == "AP001");
+        violations.ShouldContain(v => v.Id == "GR-BADREQ");
+        violations[0].Message.ShouldContain("TypedResults");
     }
 
     [Fact]
-    public void Ignores_Async_Task_Method()
+    public void Detects_Results_BadRequest()
     {
         const string source = """
-            using System.Threading.Tasks;
             public class Foo
             {
-                public async Task DoWork() { await Task.Delay(1); }
+                object M() => Results.BadRequest("error");
+            }
+            """;
+
+        var tree = CSharpSyntaxTree.ParseText(source);
+        var violations = _detector.Detect(tree, null, TestContext.Current.CancellationToken).ToList();
+        violations.ShouldContain(v => v.Id == "GR-BADREQ");
+        violations[0].Message.ShouldContain("Results");
+    }
+
+    [Fact]
+    public void Ignores_TypedResults_Problem()
+    {
+        const string source = """
+            public class Foo
+            {
+                object M() => TypedResults.Problem("error", statusCode: 400);
             }
             """;
 
@@ -41,29 +56,12 @@ public class AsyncVoidDetectorTests
     }
 
     [Fact]
-    public void Ignores_Event_Handler()
-    {
-        const string source = """
-            using System;
-            using System.Threading.Tasks;
-            public class Foo
-            {
-                public async void OnClick(object sender, EventHandler e) { await Task.Delay(1); }
-            }
-            """;
-
-        var tree = CSharpSyntaxTree.ParseText(source);
-        var violations = _detector.Detect(tree, null, TestContext.Current.CancellationToken).ToList();
-        violations.ShouldBeEmpty();
-    }
-
-    [Fact]
-    public void Ignores_Non_Async_Void_Method()
+    public void Ignores_Other_Receiver()
     {
         const string source = """
             public class Foo
             {
-                public void DoWork() { }
+                object M() => MyHelper.BadRequest("error");
             }
             """;
 
