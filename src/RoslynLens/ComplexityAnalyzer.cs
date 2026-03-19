@@ -50,17 +50,7 @@ public static class ComplexityAnalyzer
             switch (child)
             {
                 case IfStatementSyntax ifStmt:
-                    total += 1 + nesting; // increment + nesting penalty
-                    if (ifStmt.Statement is not null)
-                        total += CalculateCognitiveRecursive(ifStmt.Statement, nesting + 1);
-                    if (ifStmt.Else is not null)
-                    {
-                        total += 1; // else increment
-                        if (ifStmt.Else.Statement is IfStatementSyntax)
-                            total += CalculateCognitiveRecursive(ifStmt.Else, nesting); // else-if: no nesting increase
-                        else
-                            total += CalculateCognitiveRecursive(ifStmt.Else, nesting + 1);
-                    }
+                    total += ScoreIfStatement(ifStmt, nesting);
                     break;
 
                 case WhileStatementSyntax:
@@ -92,6 +82,20 @@ public static class ComplexityAnalyzer
         }
 
         return total;
+    }
+
+    private static int ScoreIfStatement(IfStatementSyntax ifStmt, int nesting)
+    {
+        var score = 1 + nesting;
+        if (ifStmt.Statement is not null)
+            score += CalculateCognitiveRecursive(ifStmt.Statement, nesting + 1);
+        if (ifStmt.Else is null) return score;
+
+        score += 1;
+        score += ifStmt.Else.Statement is IfStatementSyntax
+            ? CalculateCognitiveRecursive(ifStmt.Else, nesting)
+            : CalculateCognitiveRecursive(ifStmt.Else, nesting + 1);
+        return score;
     }
 
     public static int CalculateMaxNestingDepth(SyntaxNode node)

@@ -34,6 +34,7 @@ public static class FindDeadCodeTool
 
     [McpServerTool(Name = "find_dead_code")]
     [Description("Finds potentially unreferenced types, methods, and properties that may be dead code.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "S107:Methods should not have too many parameters", Justification = "MCP tool parameters are protocol-mandated")]
     public static async Task<string> ExecuteAsync(
         WorkspaceManager workspace,
         [Description("Scope: 'file', 'project', or 'solution' (default 'solution')")] string scope = "solution",
@@ -161,24 +162,25 @@ public static class FindDeadCodeTool
         if (symbol is IMethodSymbol { IsOverride: true } or IPropertySymbol { IsOverride: true })
             return true;
 
-        if (!includePublicMembers &&
-            symbol.DeclaredAccessibility == Accessibility.Public &&
-            symbol.ContainingType?.DeclaredAccessibility == Accessibility.Public)
+        if (!includePublicMembers && IsPublicOnPublicType(symbol))
             return true;
 
-        if (!includeEntryPoints)
-        {
-            if (symbol is IMethodSymbol && EntryPointNames.Contains(symbol.Name))
-                return true;
+        return !includeEntryPoints && IsEntryPointOrTest(symbol);
+    }
 
-            if (symbol is IMethodSymbol methodSymbol && HasTestAttribute(methodSymbol))
-                return true;
+    private static bool IsPublicOnPublicType(ISymbol symbol) =>
+        symbol.DeclaredAccessibility == Accessibility.Public &&
+        symbol.ContainingType?.DeclaredAccessibility == Accessibility.Public;
 
-            if (HasControllerAttribute(symbol))
-                return true;
-        }
+    private static bool IsEntryPointOrTest(ISymbol symbol)
+    {
+        if (symbol is IMethodSymbol && EntryPointNames.Contains(symbol.Name))
+            return true;
 
-        return false;
+        if (symbol is IMethodSymbol methodSymbol && HasTestAttribute(methodSymbol))
+            return true;
+
+        return HasControllerAttribute(symbol);
     }
 
     private static bool HasControllerAttribute(ISymbol symbol)
