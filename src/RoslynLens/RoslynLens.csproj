@@ -30,4 +30,15 @@
     <None Include="../../README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 
+  <!-- Exclude satellite assemblies (Roslyn localization) and legacy BuildHost -->
+  <Target Name="RemoveUnneededContent" AfterTargets="Publish">
+    <!-- Roslyn diagnostic messages in 13 locales — not needed for an MCP server -->
+    <ItemGroup>
+      <SatelliteDirs Include="$(PublishDir)cs;$(PublishDir)de;$(PublishDir)es;$(PublishDir)fr;$(PublishDir)it;$(PublishDir)ja;$(PublishDir)ko;$(PublishDir)pl;$(PublishDir)pt-BR;$(PublishDir)ru;$(PublishDir)tr;$(PublishDir)zh-Hans;$(PublishDir)zh-Hant" />
+    </ItemGroup>
+    <RemoveDir Directories="@(SatelliteDirs)" />
+    <!-- .NET Framework 4.7.2 BuildHost is unused on net10.0 -->
+    <RemoveDir Directories="$(PublishDir)BuildHost-net472" />
+  </Target>
+
 </Project>
