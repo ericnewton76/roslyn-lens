@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Text.Json;
 using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 using RoslynLens.Responses;
@@ -24,7 +23,7 @@ public static class GetProjectGraphTool
 
         var solution = workspace.GetSolution();
         if (solution is null)
-            return Task.FromResult(JsonSerializer.Serialize(new { error = "No solution loaded" }));
+            return Task.FromResult(Json.Serialize(new { error = "No solution loaded" }));
 
         var filters = projectFilter?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
@@ -68,7 +67,7 @@ public static class GetProjectGraphTool
 
         var totalMatching = filters is not null ? matchingNames.Count : allProjects.Count;
         var result = new ProjectGraphResult(nodes, totalMatching);
-        return Task.FromResult(JsonSerializer.Serialize(result));
+        return Task.FromResult(Json.Serialize(result));
     }
 
     private static void ExpandTransitiveDependencies(
