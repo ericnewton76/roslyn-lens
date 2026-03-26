@@ -17,6 +17,8 @@ public sealed class WorkspaceManager : IDisposable
     private readonly ConcurrentDictionary<ProjectId, (Compilation Compilation, long AccessCount)> _compilationCache = new();
     private long _accessCounter;
 
+    private readonly TaskCompletionSource _readySignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     private MSBuildWorkspace? _workspace;
     private Solution? _solution;
     private FileSystemWatcher? _sourceWatcher;
@@ -56,11 +58,13 @@ public sealed class WorkspaceManager : IDisposable
 
             SetupFileWatchers();
             State = WorkspaceState.Ready;
+            _readySignal.TrySetResult();
         }
         catch (Exception ex)
         {
             State = WorkspaceState.Error;
             ErrorMessage = ex.Message;
+            _readySignal.TrySetResult();
             throw;
         }
     }
@@ -69,6 +73,24 @@ public sealed class WorkspaceManager : IDisposable
     {
         if (State == WorkspaceState.Ready)
             return null;
+
+        // Wait for workspace to finish loading (up to configured timeout)
+        if (State == WorkspaceState.Loading)
+        {
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(TimeSpan.FromSeconds(_config.TimeoutSeconds));
+                _readySignal.Task.Wait(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // Timeout or caller cancelled — fall through to status response
+            }
+
+            if (State == WorkspaceState.Ready)
+                return null;
+        }
 
         var status = new { state = State.ToString(), message = ErrorMessage ?? "Workspace not ready", projectCount = ProjectCount };
         return Json.Serialize(status);
