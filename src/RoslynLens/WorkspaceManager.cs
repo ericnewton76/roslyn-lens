@@ -10,7 +10,7 @@ namespace RoslynLens;
 /// </summary>
 public sealed class WorkspaceManager : IDisposable
 {
-    private const int LazyLoadThreshold = 50;
+    private const int LazyLoadThreshold = 10;
 
     private readonly RoslynLensConfig _config;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
@@ -57,6 +57,10 @@ public sealed class WorkspaceManager : IDisposable
             }
 
             SetupFileWatchers();
+
+            // Release temporary MSBuild objects after solution load
+            GC.Collect(2, GCCollectionMode.Optimized, blocking: false);
+
             State = WorkspaceState.Ready;
             _readySignal.TrySetResult();
         }
