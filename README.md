@@ -16,7 +16,7 @@ large .NET solutions.
 
 ## Features
 
-### 28 Navigation & Analysis Tools
+### 30 Navigation & Analysis Tools
 
 | Tool | Purpose |
 | ---- | ------- |
@@ -48,6 +48,8 @@ large .NET solutions.
 | `get_public_api_batch` | Get public API of multiple types in one call |
 | `get_symbol_detail_batch` | Get details of multiple symbols in one call |
 | `resolve_external_source` | Resolve NuGet/framework source via SourceLink or decompilation |
+| `list_solutions` | List all discovered `.sln`/`.slnx` files with active flag |
+| `switch_solution` | Switch workspace to a different discovered solution at runtime |
 
 ### 18 Anti-Pattern Detectors
 
@@ -120,13 +122,17 @@ Or via `.mcp.json` in your project root:
 
 ### Solution Discovery
 
-The server automatically finds the nearest `.sln` or `.slnx` file using
-BFS from the current directory (max 3 levels up). You can also specify a
-solution explicitly:
+The server automatically finds the nearest `.sln` or `.slnx` file
+using BFS from the current directory (max 3 levels up). You can
+also specify a solution explicitly:
 
 ```bash
 roslyn-lens --solution /path/to/MySolution.slnx
 ```
+
+When multiple solutions are discovered, the server auto-selects
+the shallowest one and logs a warning. Use `list_solutions` and
+`switch_solution` to change at runtime without restarting.
 
 ### Standalone
 
@@ -177,7 +183,7 @@ src/RoslynLens/
 ├── ComplexityAnalyzer.cs       # Cyclomatic/cognitive complexity metrics
 ├── DuplicateCodeDetector.cs    # AST fingerprinting for duplicate detection
 ├── ExternalSourceResolver.cs   # SourceLink + decompilation for NuGet deps
-├── Tools/                      # 28 MCP tool implementations
+├── Tools/                      # 30 MCP tool implementations
 ├── Analyzers/                  # 18 anti-pattern detectors
 └── Responses/                  # Token-optimized DTOs
 ```
