@@ -65,6 +65,26 @@ public sealed class WorkspaceManager : IDisposable
         }
     }
 
+    public async Task ReloadSolutionAsync(string solutionPath, CancellationToken ct)
+    {
+        DisposeCurrentWorkspace();
+        await LoadSolutionAsync(solutionPath, ct);
+    }
+
+    private void DisposeCurrentWorkspace()
+    {
+        _sourceWatcher?.Dispose();
+        _sourceWatcher = null;
+        _projectWatcher?.Dispose();
+        _projectWatcher = null;
+        _workspace?.Dispose();
+        _workspace = null;
+        _solution = null;
+        _solutionDirectory = null;
+        _compilationCache.Clear();
+        ErrorMessage = null;
+    }
+
     public string? EnsureReadyOrStatus(CancellationToken ct)
     {
         if (State == WorkspaceState.Ready)
@@ -196,9 +216,7 @@ public sealed class WorkspaceManager : IDisposable
 
     public void Dispose()
     {
-        _sourceWatcher?.Dispose();
-        _projectWatcher?.Dispose();
-        _workspace?.Dispose();
+        DisposeCurrentWorkspace();
         _writeLock.Dispose();
     }
 }
