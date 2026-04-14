@@ -94,6 +94,15 @@ public sealed class WorkspaceManager : IDisposable
         return Json.Serialize(status);
     }
 
+    public string? GetMultiSolutionHint()
+    {
+        var discovered = WorkspaceInitializer.DiscoveredSolutions;
+        if (discovered.Count <= 1)
+            return null;
+
+        return $"hint: {discovered.Count} solutions discovered. Use list_solutions to see options and switch_solution to change.";
+    }
+
     public Solution? GetSolution() => _solution;
 
     public async Task<Compilation?> GetCompilationAsync(Project project, CancellationToken ct)
