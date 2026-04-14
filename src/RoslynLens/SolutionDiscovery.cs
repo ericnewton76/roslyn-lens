@@ -6,13 +6,13 @@ namespace RoslynLens;
 /// </summary>
 public static class SolutionDiscovery
 {
-    private static readonly HashSet<string> SkipDirectories = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly HashSet<string> SkipDirectories = new(StringComparer.OrdinalIgnoreCase)
     {
         ".git", ".vs", ".idea", "node_modules", "bin", "obj",
         "packages", "artifacts", "TestResults", ".claude", "nupkgs"
     };
 
-    private const int MaxBfsDepth = 3;
+    public const int MaxBfsDepth = 3;
 
     public static string? FindSolutionPath(string[] args)
     {

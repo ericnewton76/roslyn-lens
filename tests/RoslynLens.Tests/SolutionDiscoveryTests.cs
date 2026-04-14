@@ -2,228 +2,211 @@ using Shouldly;
 
 namespace RoslynLens.Tests;
 
-public class SolutionDiscoveryTests
+public class SolutionDiscoveryTests : IDisposable
 {
+    private readonly string _tempDir;
+
+    #region Test plumbing
+
+    /// <summary>
+    /// Initializes a new instance of the SolutionDiscoveryTests class and prepares the test environment.
+    /// </summary>
+    /// <remarks>Creates the temporary directory required for test execution. This constructor is intended for
+    /// use in test setup scenarios.</remarks>
+    public SolutionDiscoveryTests()
+    {
+        _tempDir = Path.Combine(Path.GetTempPath(), $"dd-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_tempDir);
+        Console.WriteLine("[SolutionDiscoveryTests] Created temp directory: {0}", _tempDir);
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            Directory.Delete(_tempDir, true);
+            Console.WriteLine("[SolutionDiscoveryTests] Deleted temp directory: {0}", _tempDir);
+        }
+        catch 
+        { 
+        }
+    }
+
+    #endregion
+
+    private string CreateSubDir(string name)
+    {
+        var path = Path.Combine(_tempDir, name);
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
+    private string CreateSolutionFile(string relativePath, string? content = null)
+    {
+        var fullPath = Path.Combine(_tempDir, relativePath);
+        var dir = Path.GetDirectoryName(fullPath)!;
+        
+        Directory.CreateDirectory(dir);
+
+        if (string.IsNullOrEmpty(content))
+        {
+            content = Path.GetExtension(fullPath) switch {
+                ".slnx" => "<Solution />",
+                ".sln" => """
+                       
+                       Microsoft Visual Studio Solution File, Format Version 12.00
+                       # Visual Studio Version 17
+                       """,
+                _ => ""
+            };
+        }
+
+        File.WriteAllText(fullPath, content);
+        return fullPath;
+    }
+
     [Fact]
     public void FindSolutionPath_With_Explicit_Arg_Returns_Path()
     {
-        // Create a temp directory with a solution file
-        var tempDir = Path.Combine(Path.GetTempPath(), $"dd-test-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(tempDir);
-        var slnPath = Path.Combine(tempDir, "Test.slnx");
-        File.WriteAllText(slnPath, "<Solution />");
+        var slnPath = CreateSolutionFile("Test.slnx");
 
-        try
-        {
-            var result = SolutionDiscovery.FindSolutionPath(["--solution", slnPath]);
-            result.ShouldNotBeNull();
-            result.ShouldEndWith("Test.slnx");
-        }
-        finally
-        {
-            Directory.Delete(tempDir, true);
-        }
+        var result = SolutionDiscovery.FindSolutionPath(["--solution", slnPath]);
+        result.ShouldNotBeNull();
+        result.ShouldEndWith("Test.slnx");
     }
 
     [Fact]
     public void BfsDiscovery_Finds_Slnx_In_Current_Dir()
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"dd-test-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(tempDir);
-        File.WriteAllText(Path.Combine(tempDir, "MyApp.slnx"), "<Solution />");
+        CreateSolutionFile("MyApp.slnx");
 
-        try
-        {
-            var result = SolutionDiscovery.BfsDiscovery(tempDir);
-            result.ShouldNotBeNull();
-            result.ShouldEndWith("MyApp.slnx");
-        }
-        finally
-        {
-            Directory.Delete(tempDir, true);
-        }
+        var result = SolutionDiscovery.BfsDiscovery(_tempDir);
+        result.ShouldNotBeNull();
+        result.ShouldEndWith("MyApp.slnx");
     }
 
     [Fact]
     public void BfsDiscovery_Returns_Null_When_No_Solution()
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"dd-test-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(tempDir);
-
-        try
-        {
-            var result = SolutionDiscovery.BfsDiscovery(tempDir);
-            result.ShouldBeNull();
-        }
-        finally
-        {
-            Directory.Delete(tempDir, true);
-        }
+        var result = SolutionDiscovery.BfsDiscovery(_tempDir);
+        result.ShouldBeNull();
     }
 
     [Fact]
     public void BfsDiscovery_Finds_Sln_In_Subdirectory()
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"dd-test-{Guid.NewGuid():N}");
-        var subDir = Path.Combine(tempDir, "src");
-        Directory.CreateDirectory(subDir);
-        File.WriteAllText(Path.Combine(subDir, "App.sln"), "");
+        CreateSolutionFile(@"src\App.sln");
 
-        try
-        {
-            var result = SolutionDiscovery.BfsDiscovery(tempDir);
-            result.ShouldNotBeNull();
-            result.ShouldEndWith("App.sln");
-        }
-        finally
-        {
-            Directory.Delete(tempDir, true);
-        }
+        var result = SolutionDiscovery.BfsDiscovery(_tempDir);
+        result.ShouldNotBeNull();
+        result.ShouldEndWith("App.sln");
     }
 
     [Fact]
     public void BfsDiscovery_Prefers_Shallower_Depth()
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"dd-test-{Guid.NewGuid():N}");
-        var subDir = Path.Combine(tempDir, "src");
-        Directory.CreateDirectory(subDir);
-        File.WriteAllText(Path.Combine(tempDir, "Root.sln"), "");
-        File.WriteAllText(Path.Combine(subDir, "Nested.sln"), "");
+        CreateSolutionFile("Root.sln");
+        CreateSolutionFile(@"src\Nested.sln");
 
-        try
-        {
-            var result = SolutionDiscovery.BfsDiscovery(tempDir);
-            result.ShouldNotBeNull();
-            result.ShouldEndWith("Root.sln");
-        }
-        finally
-        {
-            Directory.Delete(tempDir, true);
-        }
+        var result = SolutionDiscovery.BfsDiscovery(_tempDir);
+        result.ShouldNotBeNull();
+        result.ShouldEndWith("Root.sln");
     }
 
     [Fact]
     public void BfsDiscovery_Skips_Known_Directories()
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"dd-test-{Guid.NewGuid():N}");
-        var binDir = Path.Combine(tempDir, "bin");
-        Directory.CreateDirectory(binDir);
-        File.WriteAllText(Path.Combine(binDir, "Hidden.sln"), "");
+        CreateSolutionFile(@"bin\Hidden.sln");
 
-        try
-        {
-            var result = SolutionDiscovery.BfsDiscovery(tempDir);
-            result.ShouldBeNull();
-        }
-        finally
-        {
-            Directory.Delete(tempDir, true);
-        }
+        var result = SolutionDiscovery.BfsDiscovery(_tempDir);
+        result.ShouldBeNull();
     }
 
     [Fact]
-    public void BfsDiscoverAll_Returns_All_Solutions_In_Same_Directory()
+    public void BfsDiscovery_Returns_Null_Beyond_MaxBfsDepth()
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"dd-test-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(tempDir);
-        File.WriteAllText(Path.Combine(tempDir, "SolutionA.slnx"), "<Solution />");
-        File.WriteAllText(Path.Combine(tempDir, "A-Solution.slnx"), "<Solution />");
+        // MaxBfsDepth is 3, so depth 4 should be ignored
+        CreateSolutionFile(@"a\b\c\d\TooDeep.sln");
 
-        try
-        {
-            var results = SolutionDiscovery.BfsDiscoverAll(tempDir);
-            results.Count.ShouldBe(2);
-            results.ShouldContain(p => p.EndsWith("SolutionA.slnx"));
-            results.ShouldContain(p => p.EndsWith("A-Solution.slnx"));
-        }
-        finally
-        {
-            Directory.Delete(tempDir, true);
-        }
+        var result = SolutionDiscovery.BfsDiscovery(_tempDir);
+        result.ShouldBeNull();
+    }
+
+    [Fact]
+    public void BfsDiscoverAll_ReturnsAllSolutions_InAllDirectories()
+    {
+        CreateSolutionFile("SolutionA.slnx");
+        CreateSolutionFile("A-Solution.slnx");
+        CreateSolutionFile(@"src\Nested.sln");
+
+        var results = SolutionDiscovery.BfsDiscoverAll(_tempDir);
+        results.Count.ShouldBe(3);
+        results.ShouldContain(p => p.EndsWith("SolutionA.slnx"));
+        results.ShouldContain(p => p.EndsWith("A-Solution.slnx"));
+        results.ShouldContain(p => p.EndsWith("Nested.sln"));
     }
 
     [Fact]
     public void BfsDiscoverAll_Orders_By_Depth_Then_Alphabetically()
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"dd-test-{Guid.NewGuid():N}");
-        var subDir = Path.Combine(tempDir, "src");
-        Directory.CreateDirectory(subDir);
-        File.WriteAllText(Path.Combine(tempDir, "Root.sln"), "");
-        File.WriteAllText(Path.Combine(subDir, "Nested.sln"), "");
-        File.WriteAllText(Path.Combine(subDir, "Alpha.sln"), "");
+        CreateSolutionFile("Root.sln");
+        CreateSolutionFile(@"src\Nested.sln");
+        CreateSolutionFile(@"src\Alpha.sln");
 
-        try
-        {
-            var results = SolutionDiscovery.BfsDiscoverAll(tempDir);
-            results.Count.ShouldBe(3);
-            // Depth 0 first, then depth 1 alphabetically
-            results[0].ShouldEndWith("Root.sln");
-            results[1].ShouldEndWith("Alpha.sln");
-            results[2].ShouldEndWith("Nested.sln");
-        }
-        finally
-        {
-            Directory.Delete(tempDir, true);
-        }
+        var results = SolutionDiscovery.BfsDiscoverAll(_tempDir);
+        results.Count.ShouldBe(3);
+        // Depth 0 first, then depth 1 alphabetically
+        results[0].ShouldEndWith("Root.sln");
+        results[1].ShouldEndWith("Alpha.sln");
+        results[2].ShouldEndWith("Nested.sln");
     }
 
     [Fact]
     public void BfsDiscoverAll_Returns_Empty_When_No_Solutions()
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"dd-test-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(tempDir);
-
-        try
-        {
-            var results = SolutionDiscovery.BfsDiscoverAll(tempDir);
-            results.ShouldBeEmpty();
-        }
-        finally
-        {
-            Directory.Delete(tempDir, true);
-        }
+        var results = SolutionDiscovery.BfsDiscoverAll(_tempDir);
+        results.ShouldBeEmpty();
     }
 
     [Fact]
-    public void BfsDiscoverAll_Skips_Known_Directories()
+    public void BfsDiscoverAll_SkipsKnownDirectories()
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"dd-test-{Guid.NewGuid():N}");
-        var binDir = Path.Combine(tempDir, "bin");
-        var srcDir = Path.Combine(tempDir, "src");
-        Directory.CreateDirectory(binDir);
-        Directory.CreateDirectory(srcDir);
-        File.WriteAllText(Path.Combine(binDir, "Hidden.sln"), "");
-        File.WriteAllText(Path.Combine(srcDir, "Visible.sln"), "");
+        CreateSolutionFile(@"node_modules\skip_me.sln");
+        CreateSolutionFile(@"packages\Nupkg\whatever.slnx");
+        CreateSolutionFile(@"obj\skip_me_too.slnx");
+        CreateSolutionFile(@"src\Visible.sln");
 
-        try
-        {
-            var results = SolutionDiscovery.BfsDiscoverAll(tempDir);
-            results.Count.ShouldBe(1);
-            results[0].ShouldEndWith("Visible.sln");
-        }
-        finally
-        {
-            Directory.Delete(tempDir, true);
-        }
+        var results = SolutionDiscovery.BfsDiscoverAll(_tempDir);
+        results.Count.ShouldBe(1);
+        results[0].ShouldEndWith("Visible.sln");
+    }
+
+    [Fact]
+    public void BfsDiscoverAll_Ignores_Solutions_Beyond_MaxBfsDepth()
+    {
+        // MaxBfsDepth is 3, so depth 4 should be ignored
+        CreateSolutionFile("Root.sln");
+        CreateSolutionFile(@"a\b\c\d\TooDeep.slnx");
+
+        var results = SolutionDiscovery.BfsDiscoverAll(_tempDir);
+        results.Count.ShouldBe(1);
+        results[0].ShouldEndWith("Root.sln");
     }
 
     [Fact]
     public void FindSolutionPath_Without_Explicit_Arg_Uses_Bfs()
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"dd-test-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(tempDir);
         var cwd = Directory.GetCurrentDirectory();
 
         try
         {
-            Directory.SetCurrentDirectory(tempDir);
+            Directory.SetCurrentDirectory(_tempDir);
             var result = SolutionDiscovery.FindSolutionPath([]);
             result.ShouldBeNull();
         }
         finally
         {
             Directory.SetCurrentDirectory(cwd);
-            Directory.Delete(tempDir, true);
         }
     }
 }
