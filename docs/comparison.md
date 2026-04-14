@@ -6,7 +6,7 @@ How RoslynLens compares to other Roslyn-based MCP servers.
 
 | Feature | RoslynLens | SharpLensMcp | RoslynMCP | SharpToolsMCP | CodeAnalysisMCP |
 | ------- | ---------- | ------------ | --------- | ------------- | --------------- |
-| **Tools** | 28 | 58 | 5 | ~20 | 3 |
+| **Tools** | 30 | 58 | 5 | ~20 | 3 |
 | **Anti-pattern detectors** | 19 | 0 | 0 | 0 | 0 |
 | **Complexity metrics** | Yes | Yes | Yes | Yes | No |
 | **Data flow analysis** | Yes | Yes | No | No | No |
@@ -20,7 +20,7 @@ How RoslynLens compares to other Roslyn-based MCP servers.
 | **Fuzzy FQN resolution** | Yes | No | No | Yes | No |
 | **External source resolution** | Yes | No | No | Yes | No |
 | **Refactoring tools** | No | Yes (13) | No | Yes (6) | No |
-| **Auto solution discovery** | Yes (BFS) | No | No | No | No |
+| **Auto solution discovery** | Yes (BFS + multi-solution) | No | No | No | No |
 | **Global dotnet tool** | Yes | Yes | No | No | No |
 | **File watcher** | Yes | No | No | No | No |
 | **LRU compilation cache** | Yes (configurable) | Yes | Yes | No | No |

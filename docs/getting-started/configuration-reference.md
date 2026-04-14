@@ -83,6 +83,15 @@ Specify the solution explicitly:
 roslyn-lens --solution ./src/Backend/Backend.slnx
 ```
 
+Or let auto-discovery find all solutions and switch at runtime:
+
+```text
+> "List available solutions"     → calls list_solutions
+> "Switch to Frontend.slnx"     → calls switch_solution
+```
+
+See [Solution Management Tools](../tools/solution.md).
+
 ## Logging
 
 All logs go to **stderr** (stdout is reserved for MCP JSON-RPC).
