@@ -73,5 +73,5 @@ token consumption on large .NET solutions.
 
 - [Configuration](configuration.md) — MCP registration options, solution
   discovery, environment variables
-- [Tools Reference](../tools/navigation.md) — all 28 tools documented
+- [Tools Reference](../tools/navigation.md) — all 30 tools documented
 - [Anti-Pattern Detectors](../detectors/general.md) — 19 detectors explained

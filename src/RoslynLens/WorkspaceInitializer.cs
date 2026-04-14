@@ -16,12 +16,26 @@ public sealed class WorkspaceInitializer(
     /// </summary>
     public static string? SolutionPath { get; set; }
 
+    /// <summary>
+    /// All solution files discovered via BFS. Set by Program.cs before host starts.
+    /// </summary>
+    public static IReadOnlyList<string> DiscoveredSolutions { get; set; } = [];
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (SolutionPath is null)
         {
             logger.LogWarning("No solution file found. Use --solution <path> or run from a directory containing a .sln/.slnx file.");
             return;
+        }
+
+        if (DiscoveredSolutions.Count > 1)
+        {
+            logger.LogWarning(
+                "Multiple solutions discovered ({Count}). Auto-selected: {Selected}. Use list_solutions and switch_solution tools to change. Solutions: {Solutions}",
+                DiscoveredSolutions.Count,
+                SolutionPath,
+                string.Join(", ", DiscoveredSolutions));
         }
 
         if (logger.IsEnabled(LogLevel.Information))

@@ -34,14 +34,31 @@ Create `.mcp.json` in your project root:
 
 ## Solution discovery
 
-By default, the server finds the nearest `.sln` or `.slnx` file using breadth-first
-search from the current directory (up to 3 levels).
+By default, the server finds the nearest `.sln` or `.slnx` file
+using breadth-first search from the current directory (up to 3
+levels).
 
 To specify a solution explicitly:
 
 ```bash
-claude mcp add --scope user --transport stdio roslyn-lens -- roslyn-lens --solution /path/to/My.slnx
+claude mcp add --scope user --transport stdio roslyn-lens \
+  -- roslyn-lens --solution /path/to/My.slnx
 ```
+
+### Multiple solutions
+
+When multiple `.sln`/`.slnx` files are discovered, the server
+auto-selects the shallowest (then alphabetically first) and logs a
+warning listing all found solutions.
+
+Two MCP tools enable runtime switching without restarting:
+
+- `list_solutions` — lists all discovered solutions with an
+  `IsActive` flag
+- `switch_solution` — reloads the workspace with a different
+  solution (with rollback on failure)
+
+See [Solution Management Tools](../tools/solution.md) for details.
 
 ## Verify connection
 

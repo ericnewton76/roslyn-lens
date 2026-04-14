@@ -11,6 +11,11 @@ MSBuildLocator.RegisterDefaults();
 var solutionPath = SolutionDiscovery.FindSolutionPath(args);
 WorkspaceInitializer.SolutionPath = solutionPath;
 
+var discoveryRoot = solutionPath is not null
+    ? Path.GetDirectoryName(Path.GetFullPath(solutionPath))!
+    : Directory.GetCurrentDirectory();
+WorkspaceInitializer.DiscoveredSolutions = SolutionDiscovery.BfsDiscoverAll(discoveryRoot);
+
 var config = RoslynLensConfig.FromEnvironment();
 
 var builder = Host.CreateApplicationBuilder(args);

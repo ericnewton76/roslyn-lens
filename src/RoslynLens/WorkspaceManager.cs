@@ -17,7 +17,7 @@ public sealed class WorkspaceManager : IDisposable
     private readonly ConcurrentDictionary<ProjectId, (Compilation Compilation, long AccessCount)> _compilationCache = new();
     private long _accessCounter;
 
-    private readonly TaskCompletionSource _readySignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TaskCompletionSource _readySignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private MSBuildWorkspace? _workspace;
     private Solution? _solution;
@@ -73,6 +73,51 @@ public sealed class WorkspaceManager : IDisposable
         }
     }
 
+    public async Task ReloadSolutionAsync(string solutionPath, CancellationToken ct)
+    {
+        var previousPath = _solutionDirectory is not null
+            ? Directory.GetFiles(_solutionDirectory, "*.sln*").FirstOrDefault()
+            : null;
+
+        DisposeCurrentWorkspace();
+
+        try
+        {
+            await LoadSolutionAsync(solutionPath, ct);
+        }
+        catch when (previousPath is not null && !string.Equals(previousPath, solutionPath, StringComparison.OrdinalIgnoreCase))
+        {
+            // Reload failed — attempt to restore the previous solution
+            try
+            {
+                await LoadSolutionAsync(previousPath, ct);
+            }
+            catch
+            {
+                // Both loads failed — state is already Error from LoadSolutionAsync
+            }
+
+            throw;
+        }
+    }
+
+    private void DisposeCurrentWorkspace()
+    {
+        State = WorkspaceState.Loading;
+        _readySignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        _sourceWatcher?.Dispose();
+        _sourceWatcher = null;
+        _projectWatcher?.Dispose();
+        _projectWatcher = null;
+        _workspace?.Dispose();
+        _workspace = null;
+        _solution = null;
+        _solutionDirectory = null;
+        _compilationCache.Clear();
+        ErrorMessage = null;
+    }
+
     public string? EnsureReadyOrStatus(CancellationToken ct)
     {
         if (State == WorkspaceState.Ready)
@@ -98,6 +143,15 @@ public sealed class WorkspaceManager : IDisposable
 
         var status = new { state = State.ToString(), message = ErrorMessage ?? "Workspace not ready", projectCount = ProjectCount };
         return Json.Serialize(status);
+    }
+
+    public string? GetMultiSolutionHint()
+    {
+        var discovered = WorkspaceInitializer.DiscoveredSolutions;
+        if (discovered.Count <= 1)
+            return null;
+
+        return $"hint: {discovered.Count} solutions discovered. Use list_solutions to see options and switch_solution to change.";
     }
 
     public Solution? GetSolution() => _solution;
@@ -222,9 +276,7 @@ public sealed class WorkspaceManager : IDisposable
 
     public void Dispose()
     {
-        _sourceWatcher?.Dispose();
-        _projectWatcher?.Dispose();
-        _workspace?.Dispose();
+        DisposeCurrentWorkspace();
         _writeLock.Dispose();
     }
 }
